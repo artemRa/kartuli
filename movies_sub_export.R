@@ -30,16 +30,16 @@ movie_names <- sub_names %>%
 max_movie_id <- 
   DBI::dbGetQuery(
     conn,
-    "SELECT coalesce(max(sid), 0) FROM movie_sources"
+    "SELECT coalesce(max(sid), 0) FROM text_sources"
   ) %>% 
   pull()
 
-  tibble(
-    name = movie_names,
-    file = sub_names
-  ) %>% 
-  mutate(sid = row_number() + !!max_movie_id, .before = 1L) %>% 
-  dbAppendTable(conn, "movie_sources", .)
+tibble(
+  name = movie_names,
+  file = sub_names
+) %>% 
+mutate(sid = row_number() + !!max_movie_id, .before = 1L) %>% 
+dbAppendTable(conn, "text_sources", .)
 
 
 # Georgian Unicode-symbols dict 

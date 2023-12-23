@@ -46,3 +46,9 @@ DBI::dbSendQuery(
     )
   "
 )
+
+# decided make it more universal
+DBI::dbSendQuery(
+  conn,
+  "ALTER TABLE movie_sources RENAME TO text_sources"
+)

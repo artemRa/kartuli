@@ -12,7 +12,16 @@ from ka_sentences
 
 select count(*), 
 from ka_words
-*/ 
 
 select count(*), count(distinct wrd)
+from ka_words
+
+select *
 from ka_words 
+limit 10
+*/ 
+
+select count(*), count(distinct wrd), count(distinct sid) 
+from ka_words
+where stype = 'wiki'
+
