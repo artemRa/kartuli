@@ -4,5 +4,6 @@
 .Ruserdata
 /subs
 /unzip
+/books
 *.db
 *.sql
