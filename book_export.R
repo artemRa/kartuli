@@ -40,6 +40,7 @@ i <- 1L
 
 for (page in first_txt_page:length(txt_length)) {
 
+  # page <- first_txt_page
   raw_one_page <- raw_pdf_txt[page] %>% 
     reduce(paste0) %>% 
     str_split("\n") %>% 
@@ -48,9 +49,11 @@ for (page in first_txt_page:length(txt_length)) {
   
   page_txt_length <- str_length(raw_one_page)
   trust_interval <- which(page_txt_length > 0.8 * median(page_txt_length))
-  raw_one_page_trust <- raw_one_page[min(trust_interval):max(trust_interval)] %>% reduce(paste0)
+  raw_one_page_trust <- raw_one_page[min(trust_interval):max(trust_interval)]
   
   one_page_sentences <- raw_one_page_trust %>%
+    reduce(paste) %>% 
+    str_replace_all("([ა-ჰ])(-)( )([ა-ჰ])", "\\1\\3\\4") %>% 
     str_replace_all("( )([ა-ჰa-zA-Z])\\.", "\\1\\2") %>% 
     str_remove_all("\\((.*?)\\)") %>% 
     str_remove_all("\\[(.*?)\\]") %>% 
@@ -60,11 +63,11 @@ for (page in first_txt_page:length(txt_length)) {
     str_replace_all("(\\?!)", "\\?") %>% 
     str_replace_all("(!)", "\\!\\.") %>% 
     str_replace_all("(\\?)", "\\?\\.") %>% 
-    str_replace_all("([ა-ჰ])(-)([ა-ჰ])", "\\1\\3") %>% 
     str_remove("[:digit:][ა-ჰa-zA-Z](.*?)$") %>% 
     str_split("\\.") %>%
     unlist() %>% 
     str_squish() %>% 
+    str_replace_all("( )([ა-ჰa-zA-Z])( )", "\\1\\2\\.\\3") %>% 
     .[map_int(., str_length) > 1] %>% 
     .[-c(1L, length(.))] %>% 
     .[!map_lgl(., str_detect, pattern = "[^ა-ჰ[:space:][:punct:][:digit:]]+")]
@@ -75,8 +78,7 @@ for (page in first_txt_page:length(txt_length)) {
     str_replace_all("[[:punct:]]", "") %>% 
     as_tibble() %>% 
     filter(str_detect(value, pattern = "[ა-ჰ]")) %>%
-    count(value) %>% 
-    arrange(desc(n))
+    count(value)
   
   if (length(one_page_sentences) > 0) {
     
@@ -86,6 +88,31 @@ for (page in first_txt_page:length(txt_length)) {
   }
 }
 
-sentences %>% 
-  unlist() %>% 
-  .[map_int(., str_length) == 5]
+# Cleared sentences
+dbAppendTable(
+  conn, 
+  "ka_sentences", 
+  tibble(
+    stype = "book",
+    sid = !!max_source_id + 1L,
+    txt = unlist(sentences)
+  ) %>% distinct()
+)
+
+export_words <- words %>% 
+  reduce(add_row) %>% 
+  group_by(value) %>% 
+  summarise(n = sum(n)) %>% 
+  arrange(desc(n)) %>% 
+  rename(wrd = value, frq = n)
+
+# Cleared words
+dbAppendTable(
+  conn, 
+  "ka_words", 
+  tibble(
+    stype = "book",
+    sid = !!max_source_id + 1L,
+    export_words
+  )
+)
