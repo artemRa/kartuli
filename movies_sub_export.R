@@ -34,12 +34,16 @@ max_movie_id <-
   ) %>% 
   pull()
 
-tibble(
-  name = movie_names,
-  file = sub_names
-) %>% 
-mutate(sid = row_number() + !!max_movie_id, .before = 1L) %>% 
-dbAppendTable(conn, "text_sources", .)
+dbAppendTable(
+  conn, 
+  "text_sources", 
+  tibble(
+    name = movie_names,
+    file = sub_names,
+    stype = "film"
+  ) %>% 
+  mutate(sid = row_number() + !!max_movie_id, .before = 1L)
+)
 
 
 # Georgian Unicode-symbols dict 
@@ -116,7 +120,6 @@ for (movie_id in 1:length(files_to_save)) {
       arrange(desc(n))
     
     tibble(
-      stype = "film",
       sid = !!movie_id + !!max_movie_id,
       txt = movies_sentences[-movie_intro]
     ) %>% 
@@ -124,7 +127,6 @@ for (movie_id in 1:length(files_to_save)) {
     dbAppendTable(conn, "ka_sentences", .)
     
     tibble(
-      stype = "film",
       sid = !!movie_id + !!max_movie_id,
       movies_words
     ) %>% 

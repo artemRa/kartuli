@@ -92,7 +92,8 @@ for (j in 1:length(books_dir)) {
         tibble(
           sid = !!max_source_id + 1L,
           name = !!book_name,
-          file = !!book_file
+          file = !!book_file,
+          stype = "book"
         )
       )
       
@@ -101,7 +102,6 @@ for (j in 1:length(books_dir)) {
         conn, 
         "ka_sentences", 
         tibble(
-          stype = "book",
           sid = !!max_source_id + 1L,
           txt = unlist(sentences)
         ) %>% distinct()
@@ -119,7 +119,6 @@ for (j in 1:length(books_dir)) {
         conn, 
         "ka_words", 
         tibble(
-          stype = "book",
           sid = !!max_source_id + 1L,
           export_words
         )

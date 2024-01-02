@@ -19,9 +19,11 @@ read_html_iter <- function(web_link, max_attempt = 10) {
 random_wiki_page_url <- "https://ka.wikipedia.org/wiki/Special:Random"
 load_text_from_wki <- function(link = random_wiki_page_url) {
   page <- read_html_iter(random_wiki_page_url)
+  ourl <- html_attr(html_nodes(page, xpath = '//link[@rel="canonical"]'), "href")
+  durl <- URLdecode(ourl) %>% iconv("UTF-8", "UTF-8") 
   text <- html_text(html_nodes(page, "#mw-content-text p"))
   head <- html_text(html_nodes(page, "h1#firstHeading"))
-  list(head = head, text = text)
+  list(head = head, text = text, link = durl)
 }
 
 # cleaning text from wiki
@@ -65,6 +67,7 @@ for (i in 1:wiki_iter_cnt) {
   if (!wiki$head %in% existing_sources) {
   
     wiki_head <- wiki$head
+    wiki_link <- wiki$link
     sentences <- wiki$text %>% text_to_sentences()
     words <- sentences %>% 
       str_split("\\s+") %>% 
@@ -81,7 +84,9 @@ for (i in 1:wiki_iter_cnt) {
       "text_sources", 
       tibble(
         sid = !!max_source_id + 1L,
-        name = !!wiki_head
+        name = !!wiki_head,
+        file = !!wiki_link,
+        stype = "wiki"
       )
     )
     
@@ -90,7 +95,6 @@ for (i in 1:wiki_iter_cnt) {
       conn, 
       "ka_sentences", 
       tibble(
-        stype = "wiki",
         sid = !!max_source_id + 1L,
         txt = sentences
       ) %>% distinct()
@@ -101,7 +105,6 @@ for (i in 1:wiki_iter_cnt) {
       conn, 
       "ka_words", 
       tibble(
-        stype = "wiki",
         sid = !!max_source_id + 1L,
         words
       ) %>% rename(wrd = value, frq = n) 
@@ -112,4 +115,3 @@ for (i in 1:wiki_iter_cnt) {
 }
 
 dbDisconnect()
-
