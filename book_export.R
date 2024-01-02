@@ -129,3 +129,5 @@ for (j in 1:length(books_dir)) {
   
   pb$tick()
 }
+
+dbDisconnect()

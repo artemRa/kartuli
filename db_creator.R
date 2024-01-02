@@ -52,3 +52,57 @@ DBI::dbSendQuery(
   conn,
   "ALTER TABLE movie_sources RENAME TO text_sources"
 )
+
+# decided to change table a bit
+DBI::dbSendQuery(
+  conn,
+  "ALTER TABLE text_sources
+  ADD COLUMN stype TEXT AFTER sid"
+)
+
+DBI::dbSendQuery(
+  conn,
+  "UPDATE text_sources
+  SET stype = 'wiki'
+  WHERE file is null"
+)
+
+DBI::dbSendQuery(
+  conn,
+  "UPDATE text_sources
+  SET stype = 'book'
+  WHERE file like '%pdf'"
+)
+
+DBI::dbSendQuery(
+  conn,
+  "UPDATE text_sources
+  SET stype = 'film'
+  WHERE stype is null"
+)
+
+DBI::dbSendQuery(
+  conn,
+  "ALTER TABLE ka_sentences
+  DROP COLUMN stype"
+)
+
+DBI::dbSendQuery(
+  conn,
+  "ALTER TABLE ka_words
+  DROP COLUMN stype"
+)
+
+# DBI::dbSendQuery(
+#   conn,
+#   "DELETE FROM ka_sentences
+#   WHERE sid in (SELECT sid FROM text_sources WHERE stype = 'wiki')
+#   "
+# )
+# 
+# DBI::dbSendQuery(
+#   conn,
+#   "DELETE FROM text_sources
+#   WHERE stype = 'wiki'
+#   "
+# )

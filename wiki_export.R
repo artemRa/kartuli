@@ -30,15 +30,17 @@ text_to_sentences <- function(text) {
     reduce(paste0) %>%
     str_remove_all("\\((.*?)\\)") %>% 
     str_remove_all("\\[(.*?)\\]") %>% 
-    str_remove_all("\n]") %>% 
+    str_remove_all("\n") %>% 
     str_replace_all(pattern = '([[:space:]])([[:space:]])', replacement = "\\1") %>%
+    str_replace_all("([[:space:]])(\\,)", "\\2") %>% 
+    str_replace_all("( )([ა-ჰa-zA-Z])\\.", "\\1\\2") %>% 
     str_replace_all("(!)", "\\!\\.") %>% 
     str_replace_all("(\\?)", "\\?\\.") %>% 
-    str_replace_all("(- )", "\\.- ") %>% 
-    str_replace_all("\\.\\.\\.", "\u2026") %>% 
+    str_replace_all("\\.\\.\\.", "\u2026") %>%
     str_split("\\.") %>%
     unlist() %>% 
-    map_chr(str_squish) %>% 
+    str_squish() %>% 
+    str_replace_all("( )([ა-ჰa-zA-Z])( )", "\\1\\2\\.\\3") %>% 
     .[map_int(., str_length) > 0] %>% 
     .[!map_lgl(., str_detect, pattern = "[^ა-ჰ[:space:][:punct:][:digit:]]+")] %>% 
     .[!map_lgl(., str_detect, pattern = "\u00B7")]

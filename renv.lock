@@ -875,6 +875,17 @@
       ],
       "Hash": "5406fd37ef0bf9b88c8a4f264d6ec220"
     },
+    "pdftools": {
+      "Package": "pdftools",
+      "Version": "3.0.1",
+      "Source": "Repository",
+      "Repository": "CRAN",
+      "Requirements": [
+        "Rcpp",
+        "qpdf"
+      ],
+      "Hash": "b7a8772f77a852ec8fe678644fd5ba6e"
+    },
     "pillar": {
       "Package": "pillar",
       "Version": "1.6.4",
@@ -964,6 +975,18 @@
         "rlang"
       ],
       "Hash": "97def703420c8ab10d8f0e6c72101e02"
+    },
+    "qpdf": {
+      "Package": "qpdf",
+      "Version": "1.1",
+      "Source": "Repository",
+      "Repository": "CRAN",
+      "Requirements": [
+        "Rcpp",
+        "askpass",
+        "curl"
+      ],
+      "Hash": "5a2907cd44279b5861ac5f813465b5c9"
     },
     "rappdirs": {
       "Package": "rappdirs",
