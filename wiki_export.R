@@ -68,47 +68,51 @@ for (i in 1:wiki_iter_cnt) {
   
     wiki_head <- wiki$head
     wiki_link <- wiki$link
-    sentences <- wiki$text %>% text_to_sentences()
-    words <- sentences %>% 
-      str_split("\\s+") %>% 
-      unlist() %>% 
-      str_replace_all("[[:punct:]]", "") %>% 
-      as_tibble() %>% 
-      filter(str_detect(value, pattern = "[ა-ჰ]")) %>%
-      count(value) %>% 
-      arrange(desc(n))
     
-    # Info about source
-    dbAppendTable(
-      conn, 
-      "text_sources", 
-      tibble(
-        sid = !!max_source_id + 1L,
-        name = !!wiki_head,
-        file = !!wiki_link,
-        stype = "wiki"
+    if (length(wiki$text) != 0) {
+      
+      sentences <- wiki$text %>% text_to_sentences()
+      words <- sentences %>% 
+        str_split("\\s+") %>% 
+        unlist() %>% 
+        str_replace_all("[[:punct:]]", "") %>% 
+        as_tibble() %>% 
+        filter(str_detect(value, pattern = "[ა-ჰ]")) %>%
+        count(value) %>% 
+        arrange(desc(n))
+      
+      # Info about source
+      dbAppendTable(
+        conn, 
+        "text_sources", 
+        tibble(
+          sid = !!max_source_id + 1L,
+          name = !!wiki_head,
+          file = !!wiki_link,
+          stype = "wiki"
+        )
       )
-    )
-    
-    # Cleared sentences
-    dbAppendTable(
-      conn, 
-      "ka_sentences", 
-      tibble(
-        sid = !!max_source_id + 1L,
-        txt = sentences
-      ) %>% distinct()
-    )
-    
-    # Cleared words
-    dbAppendTable(
-      conn, 
-      "ka_words", 
-      tibble(
-        sid = !!max_source_id + 1L,
-        words
-      ) %>% rename(wrd = value, frq = n) 
-    )
+      
+      # Cleared sentences
+      dbAppendTable(
+        conn, 
+        "ka_sentences", 
+        tibble(
+          sid = !!max_source_id + 1L,
+          txt = sentences
+        ) %>% distinct()
+      )
+      
+      # Cleared words
+      dbAppendTable(
+        conn, 
+        "ka_words", 
+        tibble(
+          sid = !!max_source_id + 1L,
+          words
+        ) %>% rename(wrd = value, frq = n) 
+      )
+    }
   }
   
   pb$tick()
