@@ -21,7 +21,7 @@ for (j in 1:length(books_dir)) {
   book_name <- str_remove(book_file, "\\.pdf$") %>% 
     str_replace_all("-|_", " ")
   
-  existing_sources <- dbGetQuery(conn, "SELECT file FROM text_sources WHERE file is not null and file like '%.pdf%'") %>% pull()
+  existing_sources <- dbGetQuery(conn, "SELECT file FROM text_sources WHERE stype = 'book'") %>% pull()
   
   if (!book_file %in% existing_sources) {
     
@@ -43,43 +43,46 @@ for (j in 1:length(books_dir)) {
         str_squish()
       
       page_txt_length <- str_length(raw_one_page)
-      trust_interval <- which(page_txt_length > 0.8 * median(page_txt_length))
-      raw_one_page_trust <- raw_one_page[min(trust_interval):max(trust_interval)]
       
-      one_page_sentences <- raw_one_page_trust %>%
-        reduce(paste) %>% 
-        str_replace_all("([ა-ჰ])(-)( )([ა-ჰ])", "\\1\\3\\4") %>% 
-        str_replace_all("( )([ა-ჰa-zA-Z])\\.", "\\1\\2") %>% 
-        str_remove_all("\\((.*?)\\)") %>% 
-        str_remove_all("\\[(.*?)\\]") %>% 
-        str_replace_all("\\.\\.\\.", "\u2026") %>% 
-        str_replace_all("([ა-ჰa-zA-Z])([:digit:])", "\\1") %>%
-        str_replace_all("([[:space:]])([[:space:]])", "\\1") %>%
-        str_replace_all("(\\?!)", "\\?") %>% 
-        str_replace_all("(!)", "\\!\\.") %>% 
-        str_replace_all("(\\?)", "\\?\\.") %>% 
-        str_remove("[:digit:][ა-ჰa-zA-Z](.*?)$") %>% 
-        str_split("\\.") %>%
-        unlist() %>% 
-        str_squish() %>% 
-        str_replace_all("( )([ა-ჰa-zA-Z])( )", "\\1\\2\\.\\3") %>% 
-        .[map_int(., str_length) > 1] %>% 
-        .[-c(1L, length(.))] %>% 
-        .[!map_lgl(., str_detect, pattern = "[^ა-ჰ[:space:][:punct:][:digit:]]+")]
-      
-      one_page_words <- one_page_sentences %>% 
-        str_split("\\s+") %>% 
-        unlist() %>% 
-        str_replace_all("[[:punct:]]", "") %>% 
-        as_tibble() %>% 
-        filter(str_detect(value, pattern = "[ა-ჰ]")) %>%
-        count(value)
-      
-      if (length(one_page_sentences) > 0) {
+      if (sum(page_txt_length) > 0) {
+        trust_interval <- which(page_txt_length > 0.8 * median(page_txt_length))
+        raw_one_page_trust <- raw_one_page[min(trust_interval):max(trust_interval)]
         
-        sentences[[i]] <- one_page_sentences
-        words[[i]] <- one_page_words
-        i <- i + 1L 
+        one_page_sentences <- raw_one_page_trust %>%
+          reduce(paste) %>% 
+          str_replace_all("([ა-ჰ])(-)( )([ა-ჰ])", "\\1\\3\\4") %>% 
+          str_replace_all("( )([ა-ჰa-zA-Z])\\.", "\\1\\2") %>% 
+          str_remove_all("\\((.*?)\\)") %>% 
+          str_remove_all("\\[(.*?)\\]") %>% 
+          str_replace_all("\\.\\.\\.", "\u2026") %>% 
+          str_replace_all("([ა-ჰa-zA-Z])([:digit:])", "\\1") %>%
+          str_replace_all("([[:space:]])([[:space:]])", "\\1") %>%
+          str_replace_all("(\\?!)", "\\?") %>% 
+          str_replace_all("(!)", "\\!\\.") %>% 
+          str_replace_all("(\\?)", "\\?\\.") %>% 
+          str_remove("[:digit:][ა-ჰa-zA-Z](.*?)$") %>% 
+          str_split("\\.") %>%
+          unlist() %>% 
+          str_squish() %>% 
+          str_replace_all("( )([ა-ჰa-zA-Z])( )", "\\1\\2\\.\\3") %>% 
+          .[map_int(., str_length) > 1] %>% 
+          .[-c(1L, length(.))] %>% 
+          .[!map_lgl(., str_detect, pattern = "[^ა-ჰ[:space:][:punct:][:digit:]]+")]
+        
+        one_page_words <- one_page_sentences %>% 
+          str_split("\\s+") %>% 
+          unlist() %>% 
+          str_replace_all("[[:punct:]]", "") %>% 
+          as_tibble() %>% 
+          filter(str_detect(value, pattern = "[ა-ჰ]")) %>%
+          count(value)
+        
+        if (length(one_page_sentences) > 0) {
+          
+          sentences[[i]] <- one_page_sentences
+          words[[i]] <- one_page_words
+          i <- i + 1L 
+        }
       }
     }
     
