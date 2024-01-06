@@ -137,3 +137,5 @@ for (movie_id in 1:length(files_to_save)) {
   
   pb$tick()
 }
+
+dbDisconnect(conn)

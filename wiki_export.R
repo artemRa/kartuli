@@ -51,7 +51,7 @@ text_to_sentences <- function(text) {
 
 # parcing data into DB
 conn <- DBI::dbConnect(RSQLite::SQLite(), dbname = "kartuli.db")
-wiki_iter_cnt <- 1000L
+wiki_iter_cnt <- 5000L
 pb <- progress_bar$new(
   format = "[:bar] :percent ETA: :eta",
   total = wiki_iter_cnt
@@ -61,7 +61,7 @@ pb <- progress_bar$new(
 for (i in 1:wiki_iter_cnt) {
   
   wiki <- load_text_from_wki()
-  existing_sources <- dbGetQuery(conn, "SELECT name FROM text_sources") %>% pull()
+  existing_sources <- dbGetQuery(conn, "SELECT name FROM text_sources WHERE stype = 'wiki'") %>% pull()
   max_source_id <- dbGetQuery(conn, "SELECT coalesce(max(sid), 0) FROM text_sources") %>% pull()
   
   if (!wiki$head %in% existing_sources) {
@@ -118,4 +118,4 @@ for (i in 1:wiki_iter_cnt) {
   pb$tick()
 }
 
-dbDisconnect()
+dbDisconnect(conn)
