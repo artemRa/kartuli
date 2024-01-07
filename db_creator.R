@@ -106,3 +106,17 @@ DBI::dbSendQuery(
 #   WHERE stype = 'wiki'
 #   "
 # )
+
+
+DBI::dbSendQuery(
+  conn,
+  "
+    CREATE TABLE ka_pseudo_words (
+      id    INTEGER,
+      wrd   TEXT,
+      wrd2  TEXT,
+      type  TEXT,
+      PRIMARY KEY (id)
+    )
+  "
+)
