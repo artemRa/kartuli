@@ -42,4 +42,56 @@ dbAppendTable(
   pseudo_words
 )
 
+# manual clearing
+dbExecute(conn, "DELETE FROM ka_pseudo_words WHERE LENGTH(wrd) = 1")
+dbExecute(
+  conn, 
+  "
+  DELETE FROM ka_pseudo_words 
+  WHERE id in 
+  (
+    with all_ka_words as
+    (
+      SELECT wrd
+      , sum(frq) as frq
+      FROM ka_words t2 
+      JOIN text_sources t0 ON t0.sid = t2.sid
+      GROUP BY wrd
+    )
+    select a.id
+    from ka_pseudo_words a
+    join all_ka_words b1 on a.wrd  = b1.wrd
+    join all_ka_words b2 on a.wrd2 = b2.wrd
+    where 1=1 
+      and b1.frq < b2.frq 
+      and (b2.frq / b1.frq > 2 and a.type = 'aris' or a.type in ('echo', 'also'))
+  )"
+)
+
+dbExecute(
+  conn, 
+  "
+  DELETE FROM ka_pseudo_words 
+  WHERE id in 
+  (
+    with all_ka_words as
+    (
+      SELECT wrd
+      , sum(frq) as frq
+      FROM ka_words t2 
+      JOIN text_sources t0 ON t0.sid = t2.sid
+      GROUP BY wrd
+    )
+    select id
+    from 
+    (
+      select a.*
+        , row_number() over (partition by a.wrd2 order by b1.frq desc) as rn
+      from ka_pseudo_words a
+      join all_ka_words b1 on a.wrd  = b1.wrd
+    )
+    where rn > 1
+  )"
+)
+
 dbDisconnect(conn)
