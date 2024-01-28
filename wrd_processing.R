@@ -292,4 +292,69 @@ conjugate_forms <- conjugate_verbs %>%
   filter(lid %in% conjugate_words$lid)
   
 
+# dbWriteTable(conn, "conjugate_words", conjugate_words)
+# dbWriteTable(conn, "conjugate_forms", conjugate_forms)
+
+top_words %>% 
+  anti_join(ganmarteba_words_ext, by = "id") %>% 
+  select(id, wrd) %>% 
+  inner_join(conjugate_forms, by = c("wrd" = "word")) %>% 
+  mutate(tens2 = 
+           case_when(
+             tens == "Present indicative" ~ "Н",
+             tens == "Imperfect" ~ "ПН",
+             tens == "Aorist indicative" ~ "ПЗ",
+             tens == "Future indicative" ~ "Б"
+  )) %>% 
+  filter(!is.na(tens2)) %>% 
+  distinct(id, lid, wrd, tens2, form, prsn) %>% 
+  inner_join(conjugate_words, by = "lid") %>% 
+  view()
+
+
+top_words %>% 
+  anti_join(ganmarteba_words_ext, by = "id") %>% 
+  select(id, wrd) %>% 
+  anti_join(conjugate_forms, by = c("wrd" = "word")) %>% 
+  view()
+
+
+
+
+
+relative_words <- ganmarteba_words_ext %>%
+  # filter(pos1 == "noun") %>% 
+  filter(!is.na(relative)) %>% 
+  select(id, gid, word, relative)
+
+ending_list <- list()
+
+for (i in 1:nrow(relative_words)) {
+  
+  wrd0 <- relative_words$word[i]
+  wrd1 <- relative_words$relative[i]
+  root <- str_remove(wrd1, "(ს$)|(ის$)")
+  
+  ending_list[[i]] <- raw_ka_words %>% 
+    select(id, wrd) %>% 
+    filter(str_detect(wrd, paste0("^", root))) %>% 
+    filter(wrd != !!wrd0) %>% 
+    mutate(ending = str_remove(wrd, paste0("^", root))) %>%
+    filter(str_length(ending) < 10L) %>% 
+    mutate(wrd0 = !!wrd0, wrd1 = !!wrd1)
+}
+
+ending_frequency <- ending_list %>% 
+  reduce(add_row) %>%
+  group_by(ending) %>% 
+  summarise(
+    cnt = n(),
+    wrd = max(paste(wrd0, wrd1, wrd)),
+  ) %>% 
+  filter(cnt > 1L) %>% 
+  arrange(desc(cnt))
+  
+
+ending_frequency %>% 
+  write.csv2("ending_frequency.csv")
 
