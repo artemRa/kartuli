@@ -138,7 +138,7 @@ ganmarteba_words <-
 part_of_speach_dict <-
   tribble(
     ~eng,    ~eng2,		       ~geo,
-    "noun",	 "Noun",		     "არსებითი სახელი",
+    "noun",	 "Noun",		     "არსებითი სახელი",    
     "adj",   "Adjective",    "ზედსართავი სახელი",
     "adv",   "Adverb",		   "ზმნიზედა", # наречие
     "pron",  "Pronoun",		   "ნაცვალსახელი", # местоимение
@@ -149,10 +149,12 @@ part_of_speach_dict <-
     "part",	 "Participle",	 "ნაწილაკი", # частицы
     "excl",  "Exclamation",  "შორისდებული" # восклицания
   )
+
 pos_index <- map_int(ganmarteba_words$pos0, ~ which(str_detect(.x, part_of_speach_dict$geo))[1])
 ganmarteba_words_ext <- ganmarteba_words %>% 
   mutate(pos1 = !!part_of_speach_dict[pos_index,]$eng, .before = "pos0") %>% 
-  mutate_at(vars(pos0, pos1), ~if_else(is.na(pos1), as.character(NA), .x))
+  mutate_at(vars(pos0, pos1), ~if_else(is.na(pos1), as.character(NA), .x)) %>% 
+  mutate(pos1 = if_else(pos0 == "არსებითი სახელი (საწყისი)", "vern", pos1)) # отглагольное существ.
 
 # meaning and examples
 ganmarteba_extra <- 
@@ -323,26 +325,43 @@ top_words %>%
 
 
 relative_words <- ganmarteba_words_ext %>%
-  # filter(pos1 == "noun") %>% 
+  filter(pos1 == "noun") %>%
   filter(!is.na(relative)) %>% 
   select(id, gid, word, relative)
 
-ending_list <- list()
+# ending_list <- list()
+plural_list <-  list()
+k <- 1
 
 for (i in 1:nrow(relative_words)) {
   
   wrd0 <- relative_words$word[i]
   wrd1 <- relative_words$relative[i]
-  root <- str_remove(wrd1, "(ს$)|(ის$)")
+  root0 <- str_remove(wrd0, "[იოუეა]$")
+  root1 <- str_remove(wrd1, "(ს$)|(ის$)")
+  pl0 <- paste0(root0, "ები")
+  pl1 <- paste0(root1, "ები")
   
-  ending_list[[i]] <- raw_ka_words %>% 
-    select(id, wrd) %>% 
-    filter(str_detect(wrd, paste0("^", root))) %>% 
-    filter(wrd != !!wrd0) %>% 
-    mutate(ending = str_remove(wrd, paste0("^", root))) %>%
-    filter(str_length(ending) < 10L) %>% 
-    mutate(wrd0 = !!wrd0, wrd1 = !!wrd1)
+  if (pl0 != pl1) {
+    plural_list[[k]] <- raw_ka_words %>% 
+      select(id, wrd) %>% 
+      filter(wrd %in% c(pl0)) %>% 
+      add_column(wrd0, wrd1, .after = 1L)
+    k <- k + 1
+  }
+  
+  # ending_list[[i]] <- raw_ka_words %>% 
+  #   select(id, wrd) %>% 
+  #   filter(str_detect(wrd, paste0("^", root))) %>% 
+  #   filter(wrd != !!wrd0) %>% 
+  #   mutate(ending = str_remove(wrd, paste0("^", root))) %>%
+  #   filter(str_length(ending) < 10L) %>% 
+  #   mutate(wrd0 = !!wrd0, wrd1 = !!wrd1)
 }
+
+plural_list %>% 
+  reduce(add_row) %>% 
+  view()
 
 ending_frequency <- ending_list %>% 
   reduce(add_row) %>%
@@ -355,6 +374,5 @@ ending_frequency <- ending_list %>%
   arrange(desc(cnt))
   
 
-ending_frequency %>% 
-  write.csv2("ending_frequency.csv")
-
+write.csv(ending_frequency, file = "ending_frequency.csv", fileEncoding = "UTF-8", row.names = FALSE)
+readr::write_csv(ending_frequency, "ending_frequency.csv", col_names = TRUE)
