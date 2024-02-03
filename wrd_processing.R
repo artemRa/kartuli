@@ -330,41 +330,108 @@ relative_words <- ganmarteba_words_ext %>%
   select(id, gid, word, relative)
 
 # ending_list <- list()
-plural_list <-  list()
-k <- 1
+verified_ending <- 
+  c(
+    '',
+    'ის',
+    'ს',
+    'მა',
+    'მ',
+    'ო',
+    'საც',
+    'ით',
+    'თ',
+    'ზე',
+    'ში',
+    'იდან',
+    'ისთვის',
+    'თან',
+    'ამდე',
+    'სთან',
+    'ისკენ',
+    'ისათვის',
+    'სათვის',
+    'სკენ',
+    'სავით',
+    'ივით',
+    'ქვეშ',
+    'ისგან',
+    'ად',
+    'დ'
+  )
+
+word_list_temp1 <- list()
+word_list_temp2 <- list()
+word_list1 <- list()
+word_list2 <- list()
 
 for (i in 1:nrow(relative_words)) {
   
   wrd0 <- relative_words$word[i]
   wrd1 <- relative_words$relative[i]
-  root0 <- str_remove(wrd0, "[იოუეა]$")
-  root1 <- str_remove(wrd1, "(ს$)|(ის$)")
-  pl0 <- paste0(root0, "ები")
-  pl1 <- paste0(root1, "ები")
+  plural_vector <- 
+    c(
+      paste0(wrd0, "ები"),
+      paste0(str_remove(wrd0, "[იოუეა]$"), "ები"),
+      paste0(root1, "ები")
+    ) %>% 
+    unique()
+  root_vector <- 
+    c(
+      wrd0,
+      str_remove(wrd0, "ი$"),
+      str_remove(wrd0, "[იოუეა]$"),
+      str_remove(wrd1, "(ს$)|(ის$)"),
+      str_remove(wrd1, "(ს$)|([იოუეა]ს$)")
+    ) %>% 
+    unique()
   
-  if (pl0 != pl1) {
-    plural_list[[k]] <- raw_ka_words %>% 
-      select(id, wrd) %>% 
-      filter(wrd %in% c(pl0)) %>% 
-      add_column(wrd0, wrd1, .after = 1L)
-    k <- k + 1
+  # Plural forms
+  for (j in 1:length(plural_vector)) {
+    
+    plroot <- str_remove(plural_vector[j], ".$")
+    word_list_temp1[[i]] <- raw_ka_words %>%
+      select(id, wrd) %>%
+      anti_join(ganmarteba_words, by = "id") %>%
+      filter(str_detect(wrd, paste0("^", plroot))) %>%
+      filter(wrd != !!plural) %>%
+      mutate(ending = str_remove(wrd, paste0("^", plroot))) %>%
+      filter(str_length(ending) < 10L) %>%
+      mutate(ending = str_remove(ending, "[აც]$|(აც)$")) %>% 
+      mutate(wrd0 = !!wrd0, wrd1 = !!plural_vector[j])
+  }
+
+  # Singular forms
+  for (j in 1:length(root_vector)) {
+    
+    word_list_temp2[[j]] <- raw_ka_words %>%
+      select(id, wrd) %>%
+      anti_join(ganmarteba_words, by = "id") %>% 
+      # anti_join(ending_form_table, by = "id") %>%
+      filter(str_detect(wrd, paste0("^", root_vector[j]))) %>%
+      filter(!str_detect(wrd, paste0("^", plroot))) %>%   
+      filter(!wrd %in% c(!!wrd0, !!wrd1)) %>%
+      mutate(ending = str_remove(wrd, paste0("^", root_vector[j]))) %>%
+      filter(str_length(ending) < 10L) %>%
+      mutate(ending = str_remove(ending, "[აც]$|(აც)$")) %>% 
+      filter(ending %in% !!verified_ending) %>%
+      mutate(wrd0 = !!wrd0, wrd1 = !!wrd1)
   }
   
-  # ending_list[[i]] <- raw_ka_words %>% 
-  #   select(id, wrd) %>% 
-  #   filter(str_detect(wrd, paste0("^", root))) %>% 
-  #   filter(wrd != !!wrd0) %>% 
-  #   mutate(ending = str_remove(wrd, paste0("^", root))) %>%
-  #   filter(str_length(ending) < 10L) %>% 
-  #   mutate(wrd0 = !!wrd0, wrd1 = !!wrd1)
+  word_list1[[i]] <- reduce(word_list_temp1, rbind)
+  word_list2[[i]] <- reduce(word_list_temp2, rbind)
+  word_list_temp1 <- list()
+  word_list_temp2 <- list()
+
 }
 
-plural_list %>% 
-  reduce(add_row) %>% 
-  view()
+ending_form_table <- reduce(word_list1, add_row) %>%
+  add_row(reduce(word_list2, add_row))
 
-ending_frequency <- ending_list %>% 
-  reduce(add_row) %>%
+ending_form_table %>% view()
+
+ending_frequency <-  reduce(word_list1, add_row) %>%
+  add_row(reduce(word_list2, add_row)) %>%
   group_by(ending) %>% 
   summarise(
     cnt = n(),
@@ -372,7 +439,10 @@ ending_frequency <- ending_list %>%
   ) %>% 
   filter(cnt > 1L) %>% 
   arrange(desc(cnt))
-  
 
-write.csv(ending_frequency, file = "ending_frequency.csv", fileEncoding = "UTF-8", row.names = FALSE)
+reduce(word_list2, add_row) %>%
+  # add_row(reduce(word_list2, add_row)) %>% 
+  filter(ending == "ები") %>% 
+  view()
+
 readr::write_csv(ending_frequency, "ending_frequency.csv", col_names = TRUE)
