@@ -540,6 +540,11 @@ bigt <- rbind(tab1, tab2, tab3, tab4) %>%
   select(word, frq2) %>% 
   mutate(num = row_number(), .before = 1L)
 
+rating <- rbind(tab1, tab2, tab3, tab4) %>% 
+  distinct() %>% 
+  inner_join(bigt, by = "word") %>% 
+  select(num, wrd)
+
 vbigt <- rbind(tab1, tab2, tab3, tab4) %>% 
   distinct() %>% 
   inner_join(select(raw_ka_words, id, frq, frq_film), by = c("id")) %>% 
@@ -570,6 +575,44 @@ for (i in 1:nrow(vbigt)) {
     vbigt[i, "txt"] <- sample(txt, 1)[1]
   }
 }
+
+
+i <- 10
+wrd <- vbigt$form[i]
+words_from_sentense <- raw_ka_sentense$txt %>% 
+  str_replace_all("[[:punct:]]", " ") %>% 
+  str_split("\\s+") %>% 
+  map(~ .[str_detect(.x, pattern = "[ა-ჰ]")])
+
+sentence_rating <- raw_ka_sentense %>% 
+  select(id) %>% 
+  add_column(wrd = words_from_sentense) %>% 
+  unnest(wrd) %>% 
+  left_join(rating, by = "wrd") %>% 
+  group_by(id) %>% 
+  summarise(
+    maxn = max(num, na.rm = T),
+    wcnt = n(),
+    lost = sum(if_else(is.na(num), 1, 0))
+  )
+
+sentence_rating %>% 
+  filter(
+    lost < 2, 
+    maxn > 5,
+    wcnt > 1
+  ) %>% 
+  mutate(func = wcnt - lost * 5) %>% 
+  group_by(maxn) %>% 
+  arrange(desc(func)) %>% 
+  filter(row_number() < 5) %>% 
+  ungroup() %>%
+  inner_join(raw_ka_sentense, by = "id") %>% 
+  inner_join(bigt, by = c("maxn" = "num")) %>% 
+  arrange(maxn) %>%
+  write_csv2("tops.csv")
+ 
+
 
 write_csv2(vbigt, "top.csv")
 
