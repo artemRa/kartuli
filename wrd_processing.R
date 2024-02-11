@@ -3,8 +3,16 @@ library(stringr)
 library(DBI)
 library(rvest)
 library(progress)
+library(gsheet)
 
+# yaml secrets
+# yaml::write_yaml(list(glink = glink), "secret.yaml")
+config <- yaml::read_yaml("secret.yaml")
 
+# dictionaries from Google table
+verb_tense_data <- gsheet::gsheet2tbl(config$glink, sheetid = "Tense")
+
+# export pre-clearing Georgian words 
 conn <- DBI::dbConnect(RSQLite::SQLite(), dbname = "kartuli.db")
 raw_ka_words <- dbGetQuery(conn, "SELECT * FROM ka_raw_word_dict")
 
@@ -25,7 +33,7 @@ top_words <- raw_ka_words %>%
   head(1000L)
 
 
-# Exporting data from Ganmarteba dictionary ----
+# Export data from Ganmarteba dictionary ----
 # https://www.ganmarteba.ge/
 ganmarteba_quick <- function(wrd, web_link) {
   
@@ -150,11 +158,18 @@ part_of_speach_dict <-
     "excl",  "Exclamation",  "შორისდებული" # восклицания
   )
 
+# indirect match
+ganmarteba_words_connect <- ganmarteba_words %>%
+  inner_join(raw_ka_words, by = "id") %>% 
+  filter(word != wrd) %>% 
+  select_at(names(ganmarteba_words))
+
 pos_index <- map_int(ganmarteba_words$pos0, ~ which(str_detect(.x, part_of_speach_dict$geo))[1])
 ganmarteba_words_ext <- ganmarteba_words %>% 
   mutate(pos1 = !!part_of_speach_dict[pos_index,]$eng, .before = "pos0") %>% 
+  anti_join(ganmarteba_words_connect, by = "gid") %>% 
   mutate_at(vars(pos0, pos1), ~if_else(is.na(pos1), as.character(NA), .x)) %>% 
-  mutate(pos1 = if_else(pos0 == "არსებითი სახელი (საწყისი)", "vern", pos1)) # отглагольное существ.
+  mutate(pos1 = if_else(pos0 == "არსებითი სახელი (საწყისი)", "vern", pos1))  # отглагольное существ.
 
 # meaning and examples
 ganmarteba_extra <- 
@@ -241,7 +256,7 @@ for (i in 1:length(banch_of_verb_link)) {
         info = clear_div_vector[2*(1:8)+2]
       ) %>% 
       rbind(c("English", eng_translation), .) %>% 
-      filter(meta %in% c("English", "Infinitive", "Preverb")) %>% 
+      filter(meta %in% c("English", "Infinitive", "Preverb", "Participle")) %>% 
       pivot_wider(names_from = meta, values_from = info) %>% 
       rename_all(tolower) %>% 
       # filter(info != "") %>% 
@@ -254,23 +269,23 @@ for (i in 1:length(banch_of_verb_link)) {
     conjugate_tenses <- 
       map_df(num_form_vector2, 
              ~ tibble(
-               word = clear_div_vector[num_form_vector1 + .x],
-               form = c(rep(1, 3), rep(2, 3)),
+               word  = clear_div_vector[num_form_vector1 + .x],
+               numb = c(rep(1, 3), rep(2, 3)),
                prsn = rep(1:3, 2),
-               tens = str_remove_all(clear_div_vector[.x], "[ა-ჰ]") %>% str_squish(),
+               tense = str_remove_all(clear_div_vector[.x], "[ა-ჰ]") %>% str_squish(),
              )
       )
     
     num_form_vector1 <- c(2:3, 5:7)
-    num_form_vector2 <- c(129, 137, 145)
+    num_form_vector2 <- c(129) # , 137, 145)
     
     conjugate_imperative <- 
       map_df(num_form_vector2, 
              ~ tibble(
-               word = clear_div_vector[num_form_vector1 + .x],
-               form = c(rep(1, 2), rep(2, 3)),
-               prsn = c(2:3, 1:3),
-               tens = str_remove_all(clear_div_vector[.x], "[ა-ჰ]") %>% str_squish()
+               word  = clear_div_vector[num_form_vector1 + .x],
+               numb  = c(rep(1, 2), rep(2, 3)),
+               prsn  = c(2:3, 1:3),
+               tense = str_remove_all(clear_div_vector[.x], "[ა-ჰ]") %>% str_squish()
              )
       )
     
@@ -286,60 +301,79 @@ for (i in 1:length(banch_of_verb_link)) {
 # words from dictionary
 conjugate_words <- conjugate_meta %>% 
   reduce(add_row) %>% 
+  # digit from link for ordering
+  mutate(digit = coalesce(as.integer(str_extract(link, "[[:digit:]]")), 0L)) %>% 
+  # unnest infinitive
+  mutate(infinitive = map(infinitive, ~ str_split(.x, "/"))) %>%
+  unnest(infinitive) %>%
+  mutate(infinitive = map(infinitive, ~ tibble(infinitive = .x))) %>%
+  unnest(infinitive) %>% 
+  mutate_at("infinitive", str_squish) %>% 
   filter(infinitive != "")
+  
 
 # verb forms
 conjugate_forms <- conjugate_verbs %>% 
   reduce(add_row) %>% 
   filter(lid %in% conjugate_words$lid)
-  
+
+# verb forms clearing and de-duplication
+conjugate_forms_ext <- conjugate_forms %>% 
+  group_by(lid, tense) %>% 
+  arrange(numb, prsn) %>% 
+  mutate(num0 = row_number()) %>%
+  ungroup() %>% 
+  # slash-words unnest start
+  mutate(word = map(word, ~ str_split(.x, "/"))) %>%
+  unnest(word) %>%
+  mutate(word = map(word, ~ tibble(word = .x))) %>%
+  unnest(word) %>% 
+  # slash-words unnest end
+  inner_join(verb_tense_data, by = "tense") %>% 
+  inner_join(conjugate_words, by = "lid") %>%
+  group_by(word) %>%
+  arrange(digit, str_length(infinitive), num, num0) %>% 
+  mutate(priority = row_number()) %>% 
+  ungroup() %>% 
+  select(lid, priority, word, numb, prsn, tense)
+
+conjugate_words_ext <- conjugate_words %>% 
+  group_by(lid) %>% 
+  mutate(priority = row_number(), .after = "lid") %>% 
+  ungroup()
+
+
 
 # dbWriteTable(conn, "conjugate_words", conjugate_words)
 # dbWriteTable(conn, "conjugate_forms", conjugate_forms)
 
-top_words %>% 
-  anti_join(ganmarteba_words_ext, by = "id") %>% 
-  select(id, wrd) %>% 
-  inner_join(conjugate_forms, by = c("wrd" = "word")) %>% 
-  mutate(tens2 = 
-           case_when(
-             tens == "Present indicative" ~ "Н",
-             tens == "Imperfect" ~ "ПН",
-             tens == "Aorist indicative" ~ "ПЗ",
-             tens == "Future indicative" ~ "Б"
-  )) %>% 
-  filter(!is.na(tens2)) %>% 
-  distinct(id, lid, wrd, tens2, form, prsn) %>% 
-  inner_join(conjugate_words, by = "lid") %>% 
-  view()
-
-
-top_words %>% 
-  anti_join(ganmarteba_words_ext, by = "id") %>% 
-  select(id, wrd) %>% 
-  anti_join(conjugate_forms, by = c("wrd" = "word")) %>% 
-  view()
-
-
-
-# noun, vern, adj
 
 relative_words <- ganmarteba_words_ext %>% 
   filter(!is.na(relative)) %>% 
-  select(id, gid, word, relative)
+  mutate(plural = if_else(pos1 %in% c("noun", "adj"), 1L, 0L)) %>% 
+  select(id, word, relative, plural) %>% 
+  mutate(relative = map(relative, ~ str_split(.x, " "))) %>%
+  unnest(relative) %>%
+  mutate(relative = map(relative, ~ tibble(relative = .x))) %>%
+  unnest(relative) %>% 
+  group_by(id, word) %>%
+  mutate(plural = max(plural)) %>% 
+  ungroup() %>% 
+  distinct() %>% 
+  arrange(id)
 
 # ending_list <- list()
 verified_ending <- 
   tribble(
     ~etype, ~ending, ~ending0, 
     1, '', '-xი',
-    1, 'ის', '-ის',
+    1, 'ის', '-ს',
     1, 'ს', '-ს',
     1, 'მა', '-მა',
     1, 'მ', '-მ',
     1, 'ო', '-ო',
     2, 'საც', '-საც',
-    2, 'ჯერ', '-ჯერ',
+    # 2, 'ჯერ', '-ჯერ',
     2, 'ვე', '-ვე',
     3, 'ით', '-ით',
     3, 'თ', '-ით',
@@ -369,12 +403,19 @@ word_list_temp1 <- list()
 word_list_temp2 <- list()
 word_list1 <- list()
 word_list2 <- list()
+i <- 1L
+relative_id_list <- unique(relative_words$id)
 
-for (i in 1:nrow(relative_words)) {
+for (ii in relative_id_list) {
   
-  id0 <- relative_words$id[i]
-  wrd0 <- relative_words$word[i]
-  wrd1 <- relative_words$relative[i]
+  tmpl <- relative_words %>% 
+    filter(id == !!ii)
+  
+  id0 <- tmpl$id[1]
+  plural <- tmpl$plural[1]
+  wrd0 <- tmpl$word[1]
+  wrd1 <- tmpl$relative
+  
   plural_vector <- 
     c(
       paste0(wrd0, "ები"),
@@ -383,6 +424,7 @@ for (i in 1:nrow(relative_words)) {
       paste0(str_remove(wrd1, "(ს$)|([იოუეა]ს$)"), "ები")
     ) %>% 
     unique()
+  
   root_vector <- 
     c(
       wrd0,
@@ -394,27 +436,32 @@ for (i in 1:nrow(relative_words)) {
     unique()
   
   # Plural forms
-  for (j in 1:length(plural_vector)) {
+  if (plural == 1L) {
+    for (j in 1:length(plural_vector)) {
+      
+      plroot <- str_remove(plural_vector[j], ".$")
+      word_list_temp1[[i]] <- raw_ka_words %>%
+        select(id, wrd) %>%
+        anti_join(ganmarteba_words, by = "id") %>%
+        # anti_join(ending_form_table, by = "id") %>%
+        filter(str_detect(wrd, paste0("^", plroot))) %>%
+        filter(wrd != !!plural) %>%
+        mutate(ending = str_remove(wrd, paste0("^", plroot))) %>%
+        filter(str_length(ending) < 10L) %>%
+        mutate(ending = str_remove(ending, "[აც]$|(აც)$")) %>% 
+        inner_join(verified_ending, by = "ending") %>%
+        select(-ending)
+    }
     
-    plroot <- str_remove(plural_vector[j], ".$")
-    word_list_temp1[[i]] <- raw_ka_words %>%
+    word_list_temp1[[j+1]] <- raw_ka_words %>%
       select(id, wrd) %>%
       anti_join(ganmarteba_words, by = "id") %>%
-      # anti_join(ending_form_table, by = "id") %>%
-      filter(str_detect(wrd, paste0("^", plroot))) %>%
-      filter(wrd != !!plural) %>%
-      mutate(ending = str_remove(wrd, paste0("^", plroot))) %>%
-      filter(str_length(ending) < 10L) %>%
-      mutate(ending = str_remove(ending, "[აც]$|(აც)$")) %>% 
-      inner_join(verified_ending, by = "ending") %>%
-      select(-ending)
+      filter(wrd %in% !!plural_vector) %>% 
+      mutate(etype = 0, ending0 = "x")
+    
+    word_list1[[i]] <- reduce(word_list_temp1, rbind) %>% mutate(id0 = !!id0, .after = 1L)
+    word_list_temp1 <- list()
   }
-  
-  word_list_temp1[[j+1]] <- raw_ka_words %>%
-    select(id, wrd) %>%
-    anti_join(ganmarteba_words, by = "id") %>%
-    filter(wrd %in% !!plural_vector) %>% 
-    mutate(etype = 0, ending0 = "x")
 
   # Singular forms
   for (j in 1:length(root_vector)) {
@@ -436,31 +483,125 @@ for (i in 1:nrow(relative_words)) {
   word_list_temp2[[j+1]] <- raw_ka_words %>%
     select(id, wrd) %>%
     anti_join(ganmarteba_words, by = "id") %>% 
-    filter(wrd == !!wrd1) %>% 
+    filter(wrd %in% !!wrd1) %>% 
     mutate(etype = 1, ending0 = "-ის")
   
-  word_list1[[i]] <- reduce(word_list_temp1, rbind) %>% mutate(id0 = !!id0, .after = 1L)
   word_list2[[i]] <- reduce(word_list_temp2, rbind) %>% mutate(id0 = !!id0, .after = 1L)
-  word_list_temp1 <- list()
   word_list_temp2 <- list()
+  i <- i + 1
 
 }
 
-word_buliding_plural <- reduce(word_list1, add_row) %>% add_column(form = 2L)
-word_buliding_single <- reduce(word_list2, add_row) %>% add_column(form = 1L)
-word_buliding_forms_table <- add_row(word_buliding_single, word_buliding_plural)
+word_buliding_plural <- reduce(word_list1, add_row) %>% add_column(numb = 2L)
+word_buliding_single <- reduce(word_list2, add_row) %>% add_column(numb = 1L)
+word_buliding_forms_table <- add_row(word_buliding_single, word_buliding_plural) %>% 
+  distinct() %>% 
+  group_by(id) %>% 
+  arrange(etype, numb) %>%
+  filter(row_number() == 1L) %>% 
+  ungroup()
   
 
-word_buliding_forms_table %>% 
-  unique() %>% 
-  group_by(id) %>% 
-  filter(n() > 1) %>% 
-  inner_join(ganmarteba_words_ext, by = c("id0" = "id")) %>% 
-  arrange(id) %>% 
-  view()
+tab1 <- ganmarteba_words_ext %>% 
+  inner_join(raw_ka_words, by = c("id")) %>% 
+  distinct(id, wrd, word)
+
+tab2 <- conjugate_forms_ext %>% 
+  filter(priority == 1) %>% 
+  inner_join(raw_ka_words, by = c("word" = "wrd")) %>% 
+  inner_join(filter(conjugate_words_ext, priority == 1), by = "lid") %>% 
+  arrange(desc(frq)) %>%
+  distinct(id, wrd = word, word = infinitive) %>% 
+  anti_join(tab1, by = "id")
+
+tab3 <- word_buliding_forms_table %>% 
+  inner_join(raw_ka_words, by = c("id0" = "id")) %>% 
+  distinct(id, wrd = wrd.x, word = wrd.y) %>% 
+  anti_join(tab1, by = "id") %>% 
+  anti_join(tab2, by = "id")
+
+tab4 <- conjugate_words_ext %>% 
+  filter(priority == 1) %>% 
+  inner_join(raw_ka_words, by = c("infinitive" = "wrd")) %>% 
+  distinct(id, wrd = infinitive, word = infinitive) %>% 
+  anti_join(tab1, by = "id") %>% 
+  anti_join(tab2, by = "id") %>% 
+  anti_join(tab3, by = "id")
+
+
+total <- sum(raw_ka_words$frq)
+bigt <- rbind(tab1, tab2, tab3, tab4) %>% 
+  distinct() %>% 
+  inner_join(raw_ka_words, by = c("id")) %>% 
+  group_by(word) %>% 
+  summarise_at(vars(frq, frq_film), sum, na.rm = T) %>%
+  arrange(desc(frq)) %>% 
+  mutate(frq2 = cumsum(frq)) %>% 
+  select(word, frq2) %>% 
+  mutate(num = row_number(), .before = 1L)
+
+vbigt <- rbind(tab1, tab2, tab3, tab4) %>% 
+  distinct() %>% 
+  inner_join(select(raw_ka_words, id, frq, frq_film), by = c("id")) %>% 
+  inner_join(bigt, by = "word") %>% 
+  select(num, word, word, form = wrd, frq, frq2) %>% 
+  arrange(num, desc(frq)) %>% 
+  group_by(num) %>%
+  mutate(frq0 = round(100 * frq / sum(frq)),
+         frq2 = round(100 * frq2 / !!total, 1)) %>% 
+  filter(frq0 > 5) %>%
+  ungroup()
+
+raw_ka_sentense <- dbGetQuery(conn, 
+                              'select t2.id, t2.txt
+from text_sources t0
+JOIN ka_sentences t2 ON t0.sid = t2.sid
+WHERE t0.stype = "film"')
+  
+vbigt <- vbigt %>% add_column(txt = as.character(NA))
+for (i in 1:nrow(vbigt)) {
+  wrd <- vbigt$form[i]
+  txt <- raw_ka_sentense %>% 
+    filter(str_detect(txt, paste0(" ", !!wrd, " "))) %>% 
+    arrange(str_length(txt)) %>% 
+    slice(1:5) %>% 
+    pull(txt)
+  if (length(txt) > 0) {
+    vbigt[i, "txt"] <- sample(txt, 1)[1]
+  }
+}
+
+write_csv2(vbigt, "top.csv")
+
+
+
+
+
+
+rbind(tab1, tab2, tab3, tab4) %>% 
+  distinct() %>% 
+  inner_join(raw_ka_words, by = c("id")) %>% 
+  group_by(word) %>% 
+  summarise_at(vars(frq, frq_film), sum) %>% 
+  arrange(desc(frq_film)) %>% 
+  write_csv2("top.csv", )
+
+
+raw_ka_words %>% 
+  inner_join(word_buliding_forms_table, by = "id") %>% 
 
 top_words %>% 
   anti_join(ganmarteba_words_ext, by = "id") %>% 
   anti_join(conjugate_forms, by = c("wrd" = "word")) %>% 
   anti_join(word_buliding_forms_table, by = "id") %>% 
+  arrange(id) %>% 
+  write_csv2("lost.csv")
+
+ganmarteba_words_ext %>% 
+  filter(pos1 == "pron") %>% 
+  view()
+
+
+raw_ka_words %>% 
+  filter(str_detect(wrd, "^იმ")) %>% 
   view()
