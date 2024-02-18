@@ -8,6 +8,7 @@ library(gsheet)
 # yaml secrets
 # yaml::write_yaml(list(glink = glink), "secret.yaml")
 config <- yaml::read_yaml("secret.yaml")
+# ka.wikipedia.org/wiki/ქვეყნების_სია
 
 # dictionaries from Google table
 verb_tense_data <- gsheet::gsheet2tbl(config$glink, sheetid = "Tense")
@@ -15,6 +16,16 @@ verb_tense_data <- gsheet::gsheet2tbl(config$glink, sheetid = "Tense")
 # export pre-clearing Georgian words 
 conn <- DBI::dbConnect(RSQLite::SQLite(), dbname = "kartuli.db")
 raw_ka_words <- dbGetQuery(conn, "SELECT * FROM ka_raw_word_dict")
+
+# temporary tables
+# dbWriteTable(conn, "ganmarteba_words", ganmarteba_words_ext)
+# dbWriteTable(conn, "ganmarteba_extra", ganmarteba_extra)
+# dbWriteTable(conn, "conjugate_words", conjugate_words)
+# dbWriteTable(conn, "conjugate_forms", conjugate_forms)
+ganmarteba_words <- dbReadTable(conn, "ganmarteba_words")
+ganmarteba_extra <- dbReadTable(conn, "ganmarteba_extra")
+conjugate_words <- dbReadTable(conn, "conjugate_words")
+conjugate_forms <- dbReadTable(conn, "conjugate_forms")
 
 # read html ignoring errors
 read_html_iter <- function(web_link, max_attempt = 10) {
@@ -178,17 +189,10 @@ ganmarteba_extra <-
   mutate(meaning = str_replace_all(meaning, "\\([[:digit:]]\\)", " "))
 
 
-# dbWriteTable(conn, "ganmarteba_words", ganmarteba_words_ext)
-# dbWriteTable(conn, "ganmarteba_extra", ganmarteba_extra)
 
 
 # Exporting data from lingua.ge dictionary ----
 # https://lingua.ge
-
-
-top_words %>% 
-  anti_join(ganmarteba_words, by = "id") %>% 
-  view()
 
 verbs_from_ganmarteba <- ganmarteba_words %>% 
   filter(!is.na(verbs)) %>% 
@@ -344,14 +348,16 @@ conjugate_words_ext <- conjugate_words %>%
 
 
 
-# dbWriteTable(conn, "conjugate_words", conjugate_words)
-# dbWriteTable(conn, "conjugate_forms", conjugate_forms)
+
 
 
 relative_words <- ganmarteba_words_ext %>% 
+  # words with relative forms
   filter(!is.na(relative)) %>% 
+  # plural form flag
   mutate(plural = if_else(pos1 %in% c("noun", "adj"), 1L, 0L)) %>% 
   select(id, word, relative, plural) %>% 
+  # unnesting relative forms
   mutate(relative = map(relative, ~ str_split(.x, " "))) %>%
   unnest(relative) %>%
   mutate(relative = map(relative, ~ tibble(relative = .x))) %>%
@@ -501,6 +507,26 @@ word_buliding_forms_table <- add_row(word_buliding_single, word_buliding_plural)
   filter(row_number() == 1L) %>% 
   ungroup()
   
+losty <- top_words %>% 
+  anti_join(ganmarteba_words_ext, by = "id") %>% 
+  anti_join(word_buliding_forms_table, by = "id") %>% 
+  anti_join(conjugate_forms_ext, by = c("wrd" = "word"))
+
+sentenses <- raw_ka_sentense %>% 
+  add_column(wrd = words_from_sentense) %>% 
+  unnest(wrd) %>% 
+  select(-id)
+
+sentenses %>% 
+  filter(wrd == "იქცა") %>% 
+  view()
+
+losty %>% 
+  left_join(sentenses, by = "wrd") %>% 
+  group_by(id) %>% 
+  slice(1) %>% 
+  write_csv2("losty.csv")
+
 
 tab1 <- ganmarteba_words_ext %>% 
   inner_join(raw_ka_words, by = c("id")) %>% 
@@ -584,10 +610,12 @@ words_from_sentense <- raw_ka_sentense$txt %>%
   str_split("\\s+") %>% 
   map(~ .[str_detect(.x, pattern = "[ა-ჰ]")])
 
+
+
 sentence_rating <- raw_ka_sentense %>% 
   select(id) %>% 
   add_column(wrd = words_from_sentense) %>% 
-  unnest(wrd) %>% 
+  unnest(wrd) %>%
   left_join(rating, by = "wrd") %>% 
   group_by(id) %>% 
   summarise(
