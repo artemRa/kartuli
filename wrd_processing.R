@@ -8,10 +8,10 @@ library(gsheet)
 # yaml secrets
 # yaml::write_yaml(list(glink = glink), "secret.yaml")
 config <- yaml::read_yaml("secret.yaml")
-# ka.wikipedia.org/wiki/ქვეყნების_სია
 
 # dictionaries from Google table
-verb_tense_data <- gsheet::gsheet2tbl(config$glink, sheetid = "Tense")
+verb_tense_data <- gsheet::gsheet2tbl(config$glink1)
+extra_word_forms <- gsheet::gsheet2tbl(config$glink2)
 
 # export pre-clearing Georgian words 
 conn <- DBI::dbConnect(RSQLite::SQLite(), dbname = "kartuli.db")
@@ -27,10 +27,17 @@ ganmarteba_extra <- dbReadTable(conn, "ganmarteba_extra")
 conjugate_words <- dbReadTable(conn, "conjugate_words")
 conjugate_forms <- dbReadTable(conn, "conjugate_forms")
 
+
+# the most popular words
+top_words <- raw_ka_words %>%
+  arrange(id) %>%
+  head(1000L)
+
+
 # read html ignoring errors
-read_html_iter <- function(web_link, max_attempt = 10) {
+read_html_iter <- function(web_link, max_attempt = 10, ...) {
   for (i in 1:max_attempt) {
-    export_html <- try(xml2::read_html(web_link), silent = TRUE)
+    export_html <- try(xml2::read_html(web_link, ...), silent = TRUE)
     if (class(export_html)[1] != "try-error") break
   }
 
@@ -38,11 +45,23 @@ read_html_iter <- function(web_link, max_attempt = 10) {
 }
 
 
-# the most popular words
-top_words <- raw_ka_words %>%
-  arrange(id) %>%
-  head(1000L)
+# Reading countries names
+kvek_link <- "https://ka.wikipedia.org/wiki/ქვეყნების_სია"
+kvek_html <- read_html_iter(kvek_link)
+kvek_tbls <- html_nodes(kvek_html, "table")
 
+tb1 <- html_table(kvek_tbls[[2]])
+for (i in 3:29) {
+  tb2 <- html_table(kvek_tbls[[i]])
+  tb1 <- add_row(tb1, tb2)
+}
+
+country_word_table <- tb1 %>% 
+  set_names("id", "short_name", "full_name", "capital") %>% 
+  select(-id) %>%
+  mutate_all(~if_else(.x == "—", as.character(NA), .x)) %>% 
+  mutate(id = row_number(), .before = 1L)
+  
 
 # Export data from Ganmarteba dictionary ----
 # https://www.ganmarteba.ge/
@@ -507,6 +526,8 @@ word_buliding_forms_table <- add_row(word_buliding_single, word_buliding_plural)
   filter(row_number() == 1L) %>% 
   ungroup()
   
+
+
 losty <- top_words %>% 
   anti_join(ganmarteba_words_ext, by = "id") %>% 
   anti_join(word_buliding_forms_table, by = "id") %>% 
