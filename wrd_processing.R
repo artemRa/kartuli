@@ -44,6 +44,8 @@ read_html_iter <- function(web_link, max_attempt = 10, ...) {
   export_html
 }
 
+# https://ka.wikipedia.org/wiki/საქართველოს_ქალაქები
+# https://ka.wikipedia.org/wiki/მსოფლიოს_უდიდესი_ქალაქები
 
 # Reading countries names
 kvek_link <- "https://ka.wikipedia.org/wiki/ქვეყნების_სია"
@@ -56,12 +58,49 @@ for (i in 3:29) {
   tb1 <- add_row(tb1, tb2)
 }
 
-country_word_table <- tb1 %>% 
+country_word_table <- tb1 %>%
   set_names("id", "short_name", "full_name", "capital") %>% 
   select(-id) %>%
   mutate_all(~if_else(.x == "—", as.character(NA), .x)) %>% 
   mutate(id = row_number(), .before = 1L)
   
+ena_link <- "https://www.nplg.gov.ge/wikidict/index.php/მსოფლიოს_ენები"
+ena_html <- read_html_iter(ena_link)
+
+ena_descr <- ena_html %>% 
+  html_nodes("p") %>% 
+  html_text2() %>% 
+  str_split("\n") %>%
+  unlist() %>% 
+  .[str_detect(., "^([[:digit:]])([[:digit:]]|)\\.( )[ა-ჰ]")] %>% 
+  str_remove("^([[:digit:]])([[:digit:]]|)\\.") %>% 
+  str_squish()
+ 
+ena1 <- ena_descr %>% 
+  str_remove("^(ძველი|ახალი|საშუალო|ენა|ვულგარული)") %>% 
+  str_squish() %>% 
+  str_remove("([[:punct:]]| )(.*)$")
+  
+ena2 <- ena_descr %>% 
+  str_extract("(ანუ)( )(.*)") %>% 
+  str_remove("(ანუ)( )") %>% 
+  str_squish() %>% 
+  str_remove("^(ძველი|ახალი|საშუალო|ენა|ვულგარული)") %>% 
+  str_squish() %>% 
+  str_remove("([[:punct:]]| )(.*)$")
+
+language_word_table <- 
+  tibble(word = c(ena1, ena2), descr = rep(ena_descr, 2)) %>% 
+  filter(!is.na(word)) %>% 
+  group_by(word) %>% 
+  filter(row_number() == 1L)
+
+raw_ka_words %>% 
+  inner_join(language_word_table, by = c("wrd" = "word")) %>% view()
+  mutate(wrd = forcats::fct_reorder(wrd, frq)) %>% 
+  ggplot(aes(x = frq, y = wrd, fill = wrd)) +
+  geom_col()
+
 
 # Export data from Ganmarteba dictionary ----
 # https://www.ganmarteba.ge/
@@ -172,6 +211,13 @@ ganmarteba_words <-
   reduce(add_row) %>% 
   mutate(word = str_remove(word, "[[:digit:]]$"))
 
+# meaning and examples
+ganmarteba_extra <- 
+  ganmarteba_extra_list %>% 
+  reduce(add_row) %>% 
+  mutate(meaning = str_replace_all(meaning, "\\([[:digit:]]\\)", " "))
+
+
 # details about part of speech
 part_of_speach_dict <-
   tribble(
@@ -188,6 +234,12 @@ part_of_speach_dict <-
     "excl",  "Exclamation",  "შორისდებული" # восклицания
   )
 
+part_of_speach_priority <-
+  c("excl", "conj", "part", "vern", "noun", "adv", "adj") %>% 
+  tibble(part_of_speach = .) %>% 
+  mutate(num = row_number(), .before = 1L)
+
+
 # indirect match
 ganmarteba_words_connect <- ganmarteba_words %>%
   inner_join(raw_ka_words, by = "id") %>% 
@@ -196,16 +248,31 @@ ganmarteba_words_connect <- ganmarteba_words %>%
 
 pos_index <- map_int(ganmarteba_words$pos0, ~ which(str_detect(.x, part_of_speach_dict$geo))[1])
 ganmarteba_words_ext <- ganmarteba_words %>% 
-  mutate(pos1 = !!part_of_speach_dict[pos_index,]$eng, .before = "pos0") %>% 
-  anti_join(ganmarteba_words_connect, by = "gid") %>% 
-  mutate_at(vars(pos0, pos1), ~if_else(is.na(pos1), as.character(NA), .x)) %>% 
-  mutate(pos1 = if_else(pos0 == "არსებითი სახელი (საწყისი)", "vern", pos1))  # отглагольное существ.
+  mutate(part_of_speach = !!part_of_speach_dict[pos_index,]$eng, .before = "pos0") %>% 
+  mutate_at(vars(pos0, part_of_speach), ~if_else(is.na(part_of_speach), as.character(NA), .x)) %>% 
+  mutate(part_of_speach = coalesce(part_of_speach, "other")) %>% 
+  mutate(part_of_speach = if_else(pos0 == "არსებითი სახელი (საწყისი)", "vern", part_of_speach)) # отглагольное существ.
+  
+# original words dictionary
+original_word_forms <- ganmarteba_words_ext %>% 
+  anti_join(ganmarteba_words_connect, by = "gid") %>%
+  inner_join(part_of_speach_priority, by = "part_of_speach") %>% 
+  distinct(id, word, part_of_speach, num) %>% 
+  group_by(id) %>%
+  mutate(
+    multy_speach = if_else(n() > 1L, T, F),
+    source = "ganmarteba"
+  ) %>% 
+  arrange(num) %>% 
+  slice(1) %>% 
+  select(-num) %>% 
+  ungroup()
 
-# meaning and examples
-ganmarteba_extra <- 
-  ganmarteba_extra_list %>% 
-  reduce(add_row) %>% 
-  mutate(meaning = str_replace_all(meaning, "\\([[:digit:]]\\)", " "))
+
+
+
+
+
 
 
 
@@ -531,7 +598,10 @@ word_buliding_forms_table <- add_row(word_buliding_single, word_buliding_plural)
 losty <- top_words %>% 
   anti_join(ganmarteba_words_ext, by = "id") %>% 
   anti_join(word_buliding_forms_table, by = "id") %>% 
-  anti_join(conjugate_forms_ext, by = c("wrd" = "word"))
+  anti_join(conjugate_forms_ext, by = c("wrd" = "word")) %>% 
+  anti_join(extra_word_forms, by = c("wrd" = "word"))
+
+losty %>% view()
 
 sentenses <- raw_ka_sentense %>% 
   add_column(wrd = words_from_sentense) %>% 
