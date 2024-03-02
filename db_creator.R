@@ -121,6 +121,24 @@ DBI::dbSendQuery(
   "
 )
 
+# Real raw word dict
+dbExecute(conn, {
+  "
+  CREATE TABLE ka_words_sample AS
+  SELECT row_number() over (order by frq desc, src desc) as wid
+  , t.*
+  FROM
+  (
+    SELECT wrd
+    , sum(frq) as frq
+    , count(distinct sid) as src
+    FROM ka_words 
+    GROUP BY wrd
+  ) t
+  ORDER BY frq desc, src desc
+  "
+})
+
 # Raw word dictionary
 dbExecute(conn, {
   "

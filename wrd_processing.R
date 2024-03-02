@@ -1,3 +1,4 @@
+# Settings ----
 library(tidyverse)
 library(stringr)
 library(DBI)
@@ -6,7 +7,6 @@ library(progress)
 library(gsheet)
 
 # yaml secrets
-# yaml::write_yaml(list(glink = glink), "secret.yaml")
 config <- yaml::read_yaml("secret.yaml")
 
 # dictionaries from Google table
@@ -15,7 +15,7 @@ extra_word_forms <- gsheet::gsheet2tbl(config$glink2)
 
 # export pre-clearing Georgian words 
 conn <- DBI::dbConnect(RSQLite::SQLite(), dbname = "kartuli.db")
-raw_ka_words <- dbGetQuery(conn, "SELECT * FROM ka_raw_word_dict")
+raw_ka_words <- dbGetQuery(conn, "SELECT * FROM ka_words_sample")
 
 # temporary tables
 # dbWriteTable(conn, "ganmarteba_words", ganmarteba_words_ext)
@@ -26,12 +26,6 @@ ganmarteba_words <- dbReadTable(conn, "ganmarteba_words")
 ganmarteba_extra <- dbReadTable(conn, "ganmarteba_extra")
 conjugate_words <- dbReadTable(conn, "conjugate_words")
 conjugate_forms <- dbReadTable(conn, "conjugate_forms")
-
-
-# the most popular words
-top_words <- raw_ka_words %>%
-  arrange(id) %>%
-  head(1000L)
 
 
 # read html ignoring errors
@@ -47,7 +41,9 @@ read_html_iter <- function(web_link, max_attempt = 10, ...) {
 # https://ka.wikipedia.org/wiki/საქართველოს_ქალაქები
 # https://ka.wikipedia.org/wiki/მსოფლიოს_უდიდესი_ქალაქები
 
-# Reading countries names
+
+# Extra word information ----
+# 1. Reading countries names
 kvek_link <- "https://ka.wikipedia.org/wiki/ქვეყნების_სია"
 kvek_html <- read_html_iter(kvek_link)
 kvek_tbls <- html_nodes(kvek_html, "table")
@@ -64,6 +60,23 @@ country_word_table <- tb1 %>%
   mutate_all(~if_else(.x == "—", as.character(NA), .x)) %>% 
   mutate(id = row_number(), .before = 1L)
   
+country_word_table %>% view()
+
+country_word_table %>%
+  mutate(relative = str_extract(full_name, "\\w+")) %>% 
+  mutate(relative = if_else(str_detect(relative, "ს$") & !str_detect(short_name, relative), relative, as.character(NA))) %>% 
+  view()
+  
+  
+  
+  anti_join(raw_ka_words, by = c("short_name" = "wrd")) %>% 
+  # filter(str_detect(short_name, "[[:punct:]]|[[:space:]]")) %>% 
+  view()
+
+
+
+
+
 ena_link <- "https://www.nplg.gov.ge/wikidict/index.php/მსოფლიოს_ენები"
 ena_html <- read_html_iter(ena_link)
 
@@ -102,6 +115,11 @@ raw_ka_words %>%
   geom_col()
 
 
+  # the most popular words
+  top_words <- raw_ka_words %>%
+    arrange(id) %>%
+    head(1000L)
+  
 # Export data from Ganmarteba dictionary ----
 # https://www.ganmarteba.ge/
 ganmarteba_quick <- function(wrd, web_link) {
