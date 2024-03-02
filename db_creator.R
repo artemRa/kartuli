@@ -122,9 +122,22 @@ DBI::dbSendQuery(
 )
 
 # Real raw word dict
+DBI::dbSendQuery(
+  conn,
+  "
+    CREATE TABLE ka_words_sample (
+      wid INTEGER,
+      wrd TEXT,
+      frq INTEGER,
+      src INTEGER,
+      PRIMARY KEY (wid)
+    )
+  "
+)
+
 dbExecute(conn, {
   "
-  CREATE TABLE ka_words_sample AS
+  INSERT INTO ka_words_sample
   SELECT row_number() over (order by frq desc, src desc) as wid
   , t.*
   FROM
@@ -135,9 +148,27 @@ dbExecute(conn, {
     FROM ka_words 
     GROUP BY wrd
   ) t
-  ORDER BY frq desc, src desc
   "
 })
+
+DBI::dbSendQuery(
+  conn,
+  "
+    CREATE TABLE ka_word_tidy_dict (
+      wid INTEGER,
+      oid INTEGER,
+      word TEXT,
+      pos TEXT,
+      multypos BOOLEAN,
+      source TEXT,
+      desc TEXT,
+      type TEXT,
+      eng TEXT,
+      rus TEXT,
+      PRIMARY KEY (wid)
+    )
+  "
+)
 
 # Raw word dictionary
 dbExecute(conn, {

@@ -59,21 +59,39 @@ country_word_table <- tb1 %>%
   select(-id) %>%
   mutate_all(~if_else(.x == "—", as.character(NA), .x)) %>% 
   mutate(id = row_number(), .before = 1L)
-  
-country_word_table %>% view()
 
-country_word_table %>%
-  mutate(relative = str_extract(full_name, "\\w+")) %>% 
-  mutate(relative = if_else(str_detect(relative, "ს$") & !str_detect(short_name, relative), relative, as.character(NA))) %>% 
-  view()
-  
-  
-  
-  anti_join(raw_ka_words, by = c("short_name" = "wrd")) %>% 
-  # filter(str_detect(short_name, "[[:punct:]]|[[:space:]]")) %>% 
-  view()
+country_name_table <- country_word_table %>%
+  mutate(relative = str_extract(full_name, "\\w+")) %>%
+  mutate(relative = if_else(
+    str_detect(relative, "ს$") & !str_detect(short_name, relative) & str_sub(relative, 1, 1) == str_sub(short_name, 1, 1), 
+    relative, as.character(NA))) %>% 
+  filter(!str_detect(short_name, "[[:space:]]")) %>% 
+  select(word = short_name, relative, desc = full_name)
 
+country_name_table %>% 
+  select(word, relative) %>% 
+  pivot_longer(cols = everything(), values_drop_na = T, values_to = "wrd") %>% 
+  select(-name) %>%
+  anti_join(raw_ka_words, by = "wrd") %>% 
+  dbAppendTable(conn, "ka_words_sample", .)
+  
+raw_ka_words <- dbGetQuery(conn, "SELECT * FROM ka_words_sample")
 
+# countries names
+country_name_table %>% 
+  inner_join(raw_ka_words, by = c("word" = "wrd")) %>% 
+  mutate(pos = "noun", multypos = F, source = "countries", oid = wid) %>% 
+  select(wid, oid, word, pos, multypos, source, desc) %>%
+  dbAppendTable(conn, "ka_word_tidy_dict", .)
+
+# countries relatives
+country_name_table %>% 
+  inner_join(raw_ka_words, by = c("word" = "wrd")) %>% 
+  rename(oid = wid) %>% 
+  inner_join(raw_ka_words, by = c("relative" = "wrd")) %>% 
+  mutate(pos = "noun", multypos = F, source = "countries", type = "relative") %>% 
+  select(wid, oid, word = relative, pos, multypos, source, type) %>% 
+  dbAppendTable(conn, "ka_word_tidy_dict", .)
 
 
 
