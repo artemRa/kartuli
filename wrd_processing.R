@@ -38,12 +38,10 @@ read_html_iter <- function(web_link, max_attempt = 10, ...) {
   export_html
 }
 
-# https://ka.wikipedia.org/wiki/საქართველოს_ქალაქები
-# https://ka.wikipedia.org/wiki/მსოფლიოს_უდიდესი_ქალაქები
-
 
 # Extra word information ----
-# 1. Reading countries names
+# 1. Main countries names
+# W1: ქვეყნების სია
 kvek_link <- "https://ka.wikipedia.org/wiki/ქვეყნების_სია"
 kvek_html <- read_html_iter(kvek_link)
 kvek_tbls <- html_nodes(kvek_html, "table")
@@ -68,20 +66,28 @@ country_name_table <- country_word_table %>%
   filter(!str_detect(short_name, "[[:space:]]")) %>% 
   select(word = short_name, relative, desc = full_name)
 
+# adding lost countries
 country_name_table %>% 
   select(word, relative) %>% 
   pivot_longer(cols = everything(), values_drop_na = T, values_to = "wrd") %>% 
   select(-name) %>%
   anti_join(raw_ka_words, by = "wrd") %>% 
   dbAppendTable(conn, "ka_words_sample", .)
-  
+
+# adding lost capitals
+country_word_table %>% 
+  filter(!is.na(capital)) %>% 
+  anti_join(raw_ka_words, by = c("capital" = "wrd")) %>% 
+  select(wrd = capital) %>% 
+  dbAppendTable(conn, "ka_words_sample", .)
+
 raw_ka_words <- dbGetQuery(conn, "SELECT * FROM ka_words_sample")
 
 # countries names
 country_name_table %>% 
   inner_join(raw_ka_words, by = c("word" = "wrd")) %>% 
-  mutate(pos = "noun", multypos = F, source = "countries", oid = wid) %>% 
-  select(wid, oid, word, pos, multypos, source, desc) %>%
+  mutate(pos = "noun", num = 1L, tid = "X000", source = "W1", oid = wid) %>% 
+  select(wid, num, pos, oid, tid, word, desc, source) %>% 
   dbAppendTable(conn, "ka_word_tidy_dict", .)
 
 # countries relatives
@@ -89,12 +95,32 @@ country_name_table %>%
   inner_join(raw_ka_words, by = c("word" = "wrd")) %>% 
   rename(oid = wid) %>% 
   inner_join(raw_ka_words, by = c("relative" = "wrd")) %>% 
-  mutate(pos = "noun", multypos = F, source = "countries", type = "relative") %>% 
-  select(wid, oid, word = relative, pos, multypos, source, type) %>% 
+  mutate(pos = "noun", num = 1L, tid = "N000", source = "W1") %>% 
+  select(wid, num, pos, oid, tid, word = relative, source) %>%
   dbAppendTable(conn, "ka_word_tidy_dict", .)
 
+# manual fixing: gana & america
+dbExecute(conn, "UPDATE ka_word_tidy_dict SET num = ? WHERE wid = ?", params = list(2L, 401L))
+filter(raw_ka_words, wrd == "ამერიკა") %>% 
+  mutate(oid = 3560L, pos = "noun", num = 1L, tid = "X001", word = wrd, source = "W1") %>% 
+  select(wid, num, pos, oid, tid, word, source) %>% 
+  dbAppendTable(conn, "ka_word_tidy_dict", .)
+
+country_word_table %>% 
+  filter(!is.na(capital)) %>% 
+  inner_join(raw_ka_words, by = c("capital" = "wrd")) %>% 
+  mutate(pos = "noun", tid = "X000", source = "W1", oid = wid) %>% 
+  mutate(num = if_else(capital == short_name, 2L, 1L)) %>% 
+  mutate(desc = paste("დედაქალაქი:", full_name)) %>% 
+  select(wid, num, pos, oid, tid, word = capital, source, desc) %>%
+  dbAppendTable(conn, "ka_word_tidy_dict", .)
+
+# manual fixing: male & names
+dbExecute(conn, "UPDATE ka_word_tidy_dict SET num = 2 WHERE wid = ?", params = list(c(170, 4163, 4432)))
 
 
+# 2. Main languages names
+# W2: მსოფლიოს ენები
 ena_link <- "https://www.nplg.gov.ge/wikidict/index.php/მსოფლიოს_ენები"
 ena_html <- read_html_iter(ena_link)
 
@@ -126,20 +152,55 @@ language_word_table <-
   group_by(word) %>% 
   filter(row_number() == 1L)
 
-raw_ka_words %>% 
-  inner_join(language_word_table, by = c("wrd" = "word")) %>% view()
-  mutate(wrd = forcats::fct_reorder(wrd, frq)) %>% 
-  ggplot(aes(x = frq, y = wrd, fill = wrd)) +
-  geom_col()
+language_word_table %>% 
+  anti_join(raw_ka_words, by = c("word" = "wrd")) %>% 
+  select(wrd = word)  %>% 
+  dbAppendTable(conn, "ka_words_sample", .)
+
+raw_ka_words <- dbGetQuery(conn, "SELECT * FROM ka_words_sample")
+ka_word_tidy_dict <- dbGetQuery(conn, "SELECT * FROM ka_word_tidy_dict")
+
+language_word_table %>% 
+  inner_join(raw_ka_words, by = c("word" = "wrd")) %>% 
+  anti_join(ka_word_tidy_dict, by = "wid") %>% 
+  mutate(num = 1L, oid = wid, tid = "X000", source = "W2") %>% 
+  mutate(pos = if_else(str_detect(word, "უ[რლ]ი$"), "adj", "noun")) %>% 
+  mutate_at(vars(descr), str_remove, pattern = "[[:punct:]]$") %>% 
+  select(wid, num, pos, oid, tid, word, source, desc = descr) %>% 
+  dbAppendTable(conn, "ka_word_tidy_dict", .)
 
 
-  # the most popular words
-  top_words <- raw_ka_words %>%
-    arrange(id) %>%
-    head(1000L)
+# 3. Biggest cities
+# W3: მსოფლიოს უდიდესი ქალაქები
+
+city_link <- "https://ka.wikipedia.org/wiki/მსოფლიოს_უდიდესი_ქალაქები"
+city_html <- read_html_iter(city_link)
+city_data <- html_nodes(city_html, "table")[[1]] %>% 
+  html_table()
+
+city_table <- city_data[, c("რანგი", "ქალაქი","ქვეყანა")] %>% 
+  set_names(c("id", "city", "country"))
+
+city_table %>% 
+  anti_join(raw_ka_words, by = c("city" = "wrd")) %>% 
+  select(wrd = city)  %>% 
+  dbAppendTable(conn, "ka_words_sample", .)
+
+raw_ka_words <- dbGetQuery(conn, "SELECT * FROM ka_words_sample")
+ka_word_tidy_dict <- dbGetQuery(conn, "SELECT * FROM ka_word_tidy_dict")
+
+city_table %>% 
+  inner_join(raw_ka_words, by = c("city" = "wrd")) %>% 
+  anti_join(ka_word_tidy_dict, by = "wid") %>% 
+  mutate(num = 1L, pos = "noun", oid = wid, tid = "X000", source = "W3") %>% 
+  mutate(desc = paste("ქალაქი:", country)) %>% 
+  select(wid, num, pos, oid, tid, word = city, source, desc) %>% 
+  dbAppendTable(conn, "ka_word_tidy_dict", .)
+  
+
   
 # Export data from Ganmarteba dictionary ----
-# https://www.ganmarteba.ge/
+# G1: https://www.ganmarteba.ge/
 ganmarteba_quick <- function(wrd, web_link) {
   
   ganmarteba_html <- read_html_iter(web_link)
@@ -168,6 +229,9 @@ ganmarteba_quick <- function(wrd, web_link) {
   list(link = next_pages, html = ganmarteba_html)
 }
 
+top_words <- raw_ka_words %>% 
+  arrange(wid) %>% 
+  head(5000L)
 
 pb <- progress_bar$new(
   format = "[:bar] :percent ETA: :eta",
@@ -178,9 +242,9 @@ ganmarteba_words_list <- list()
 ganmarteba_extra_list <- list()
 k <- 1L
 
-for (i in top_words$id) {
+for (i in top_words$wid) {
 
-  wrd <- filter(top_words, id == !!i) %>% pull(wrd)
+  wrd <- filter(top_words, wid == !!i) %>% pull(wrd)
   web_link <- paste0("https://www.ganmarteba.ge/word/", wrd)
   ganmarteba <- ganmarteba_quick(wrd, web_link)
   
@@ -215,7 +279,7 @@ for (i in top_words$id) {
     if (!is.na(word_from_site)) {
       ganmarteba_words_list[[k]] <- 
         tibble(
-          id  = i,
+          wid  = i,
           gid = k,
           word = word_from_site,
           pos0 = part_of_speach,
@@ -253,7 +317,6 @@ ganmarteba_extra <-
   reduce(add_row) %>% 
   mutate(meaning = str_replace_all(meaning, "\\([[:digit:]]\\)", " "))
 
-
 # details about part of speech
 part_of_speach_dict <-
   tribble(
@@ -270,10 +333,38 @@ part_of_speach_dict <-
     "excl",  "Exclamation",  "შორისდებული" # восклицания
   )
 
+pos_index <- map_int(ganmarteba_words$pos0, ~ which(str_detect(.x, part_of_speach_dict$geo))[1])
+ganmarteba_words_ext <- ganmarteba_words %>% 
+  mutate(pos = !!part_of_speach_dict[pos_index,]$eng, .before = "pos0") %>% 
+  mutate_at(vars(pos0, pos), ~if_else(is.na(pos), as.character(NA), .x)) %>% 
+  mutate(pos = coalesce(pos, "oth")) %>% 
+  mutate(pos = if_else(pos0 == "არსებითი სახელი (საწყისი)", "verb", pos)) %>%  # отглагольное существ.
+  group_by(word, pos) %>% 
+  mutate(dig = max(coalesce(as.integer(str_extract(site, "[[:digit:]]")), 9L))) %>% 
+  group_by(word) %>% 
+  mutate(num = dense_rank(desc(paste0(dig, pos)))) %>% 
+  ungroup() %>% 
+  select(-dig)
+
+ganmarteba_words_changing <- ganmarteba_words_ext %>% 
+  inner_join(select(raw_ka_words, wid, wrd), by = "wid") %>%
+  filter(word != wrd) %>% 
+  select(-wrd)
+
+ganmarteba_words_ext %>% 
+  anti_join(ganmarteba_words_changing, by = "gid") %>% 
+  
+  mutate(num = str_extract(site, "[[:digit:]]")) %>% 
+  view()
+
+
 part_of_speach_priority <-
   c("excl", "conj", "part", "vern", "noun", "adv", "adj") %>% 
   tibble(part_of_speach = .) %>% 
   mutate(num = row_number(), .before = 1L)
+
+
+
 
 
 # indirect match
