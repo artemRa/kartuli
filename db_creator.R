@@ -151,21 +151,22 @@ dbExecute(conn, {
   "
 })
 
+# DBI::dbSendQuery(conn, "DROP TABLE ka_word_tidy_dict")
 DBI::dbSendQuery(
   conn,
   "
     CREATE TABLE ka_word_tidy_dict (
       wid INTEGER,
+      num INTEGER,
+      pos TEXT,
+      tid TEXT,
       oid INTEGER,
       word TEXT,
-      pos TEXT,
-      multypos BOOLEAN,
-      source TEXT,
       desc TEXT,
-      type TEXT,
       eng TEXT,
       rus TEXT,
-      PRIMARY KEY (wid)
+      source TEXT,
+      PRIMARY KEY (wid, num)
     )
   "
 )
