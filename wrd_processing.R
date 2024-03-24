@@ -22,10 +22,10 @@ raw_ka_words <- dbGetQuery(conn, "SELECT * FROM ka_words_sample")
 # dbWriteTable(conn, "ganmarteba_extra", ganmarteba_extra)
 # dbWriteTable(conn, "conjugate_words", conjugate_words)
 # dbWriteTable(conn, "conjugate_forms", conjugate_forms)
-ganmarteba_words <- dbReadTable(conn, "ganmarteba_words")
-ganmarteba_extra <- dbReadTable(conn, "ganmarteba_extra")
-conjugate_words <- dbReadTable(conn, "conjugate_words")
-conjugate_forms <- dbReadTable(conn, "conjugate_forms")
+# ganmarteba_words <- dbReadTable(conn, "ganmarteba_words")
+# ganmarteba_extra <- dbReadTable(conn, "ganmarteba_extra")
+# conjugate_words <- dbReadTable(conn, "conjugate_words")
+# conjugate_forms <- dbReadTable(conn, "conjugate_forms")
 
 
 # read html ignoring errors
@@ -304,6 +304,8 @@ for (i in top_words$wid) {
   pb$tick()
 }
 
+save(ganmarteba_words_list, file = "ganmarteba_words_list.RData")
+save(ganmarteba_extra_list, file = "ganmarteba_extra_list.RData")
 
 # words from dictionary
 ganmarteba_words <- 
@@ -338,23 +340,98 @@ ganmarteba_words_ext <- ganmarteba_words %>%
   mutate(pos = !!part_of_speach_dict[pos_index,]$eng, .before = "pos0") %>% 
   mutate_at(vars(pos0, pos), ~if_else(is.na(pos), as.character(NA), .x)) %>% 
   mutate(pos = coalesce(pos, "oth")) %>% 
-  mutate(pos = if_else(pos0 == "არსებითი სახელი (საწყისი)", "verb", pos)) %>%  # отглагольное существ.
+  mutate(pos = if_else(pos0 == "არსებითი სახელი (საწყისი)", "verb", pos))  # отглагольное существ.
+
+cleared_ganmarteba_words <- ganmarteba_words_ext %>% 
+  inner_join(select(raw_ka_words, wid, wrd), by = c("wid", "word" = "wrd")) %>%
+  mutate(dig = max(coalesce(as.integer(str_extract(site, "[[:digit:]]")), 9L))) %>%
+  group_by(word) %>%
+  mutate(num = dense_rank(desc(paste0(dig, pos)))) %>%
+  ungroup() %>%
   group_by(word, pos) %>% 
-  mutate(dig = max(coalesce(as.integer(str_extract(site, "[[:digit:]]")), 9L))) %>% 
-  group_by(word) %>% 
-  mutate(num = dense_rank(desc(paste0(dig, pos)))) %>% 
-  ungroup() %>% 
+  mutate(rn = row_number(dig)) %>% 
   select(-dig)
+
+cleared_ganmarteba_words %>% 
+  left_join(ganmarteba_extra, by = "gid") %>%
+  filter(rn == 1L, coalesce(mid, 1L) == 1L) %>% 
+  mutate(tid = "X000", source = "G1", oid = wid, desc = meaning) %>% 
+  select(wid, num, pos, tid, oid, word, desc, source) %>% 
+  dbAppendTable(conn, "ka_word_tidy_dict", .)
+
+relative_cleared_ganmarteba_words <- 
+  cleared_ganmarteba_words %>% 
+  filter(!is.na(relative)) %>% 
+  mutate(data = map(relative, ~ str_split(.x, " "))) %>%
+  unnest(data) %>% 
+  mutate(data = map(data, ~ tibble(data = .x))) %>%
+  unnest(data) %>% 
+  mutate_at(vars(data), ~ str_remove(.x, "[[:punct:]]$")) %>% 
+  rename(wrd = data) %>% 
+  filter(rn == 1L) %>% 
+  group_by(wrd) %>% 
+  select(-c(rn, num)) %>% 
+  mutate(num = row_number(desc(wid))) %>% 
+  ungroup()
+  
+relative_cleared_ganmarteba_words %>% 
+  anti_join(raw_ka_words, by = "wrd") %>% 
+  distinct(wrd) %>% 
+  dbAppendTable(conn, "ka_words_sample", .)
+
+raw_ka_words <- dbGetQuery(conn, "SELECT * FROM ka_words_sample")
+ka_word_tidy_dict <- dbGetQuery(conn, "SELECT * FROM ka_word_tidy_dict")
+ka_word_tidy_dict_max <- ka_word_tidy_dict %>% 
+  group_by(wid) %>% 
+  summarise(numm = max(num))
+
+relative_cleared_ganmarteba_words %>% 
+  rename(oid = wid) %>% 
+  inner_join(raw_ka_words, by = "wrd") %>% 
+  left_join(ka_word_tidy_dict_max, by = "wid") %>% 
+  mutate(tid = "N000", source = "G1") %>% 
+  mutate(desc = paste(word, "(ნათესაობითი ბრუნვა)")) %>% 
+  mutate(num = coalesce(numm, 0L) + num) %>% 
+  select(-word) %>% 
+  select(wid, num, pos, tid, oid, word = wrd, desc, source) %>% 
+  dbAppendTable(conn, "ka_word_tidy_dict", .)
+
+ka_word_tidy_dict <- dbGetQuery(conn, "SELECT * FROM ka_word_tidy_dict")
+
+top_words %>% 
+  left_join(filter(ka_word_tidy_dict, num == 1L), by = "wid") %>% 
+  mutate(gr = ntile(wid, 5)) %>% 
+  group_by(gr) %>% 
+  summarise(coverage = sum(num, na.rm = T) / n()) %>% 
+  mutate(x = 1, y = gr * 1000) %>% 
+  ggplot(aes(x = x, y = y, fill = coverage)) +
+  geom_tile(show.legend = F) +
+  geom_text(aes(label = scales::percent_format(accuracy = 1L)(coverage))) +
+  scale_fill_gradient(limits = c(0, 1), low = "yellow", high = "red") +
+  labs(
+    x = NULL, y = NULL, 
+    title = "Top 5K words coverage",
+    subtitle = "www.ganmarteba.ge"
+  ) +
+  theme(axis.text.x = element_blank())
+
+
 
 ganmarteba_words_changing <- ganmarteba_words_ext %>% 
   inner_join(select(raw_ka_words, wid, wrd), by = "wid") %>%
-  filter(word != wrd) %>% 
+  filter(word != wrd) %>% view()
   select(-wrd)
 
+
 ganmarteba_words_ext %>% 
-  anti_join(ganmarteba_words_changing, by = "gid") %>% 
-  
-  mutate(num = str_extract(site, "[[:digit:]]")) %>% 
+  anti_join(ganmarteba_words_changing, by = "gid") %>%
+  head() %>% 
+  view()
+
+ganmarteba_words_ext %>% 
+  group_by(word, pos, num) %>% 
+  filter(n() > 1) %>% 
+  arrange(word, pos, num) %>% 
   view()
 
 
