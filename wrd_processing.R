@@ -11,6 +11,7 @@ config <- yaml::read_yaml("secret.yaml")
 
 # dictionaries from Google table
 verb_tense_data <- gsheet::gsheet2tbl(config$glink1)
+verb_forms_data <- gsheet::gsheet2tbl(config$glink3)
 extra_word_forms <- gsheet::gsheet2tbl(config$glink2)
 
 # export pre-clearing Georgian words 
@@ -415,6 +416,159 @@ top_words %>%
   ) +
   theme(axis.text.x = element_blank())
 
+
+
+# Export verbs from Lingua.ge ----
+# L1: https://lingua.ge/verbs
+
+# Export from google-search
+verb_query <- "site:https://lingua.ge/verbs"
+page_index <- 10L*(0L:70L)
+verb_links_list <- list()
+j <- 1L
+for (i in page_index) {
+  google_url <- paste0("https://www.google.com/search?q=", URLencode(verb_query), "&start=", i)
+  google_page <- read_html_iter(google_url)
+  verb_links_list[[j]] <- google_page %>%
+    html_nodes("a") %>%
+    html_attr("href") %>%
+    grep("^/url\\?q=", ., value = TRUE) %>%
+    gsub("^/url\\?q=", "", .) %>%
+    gsub("&.*", "", .) %>% 
+    map_chr(~ iconv(URLdecode(.x), "UTF-8", "UTF-8")) %>% 
+    map_chr(~ iconv(URLdecode(.x), "UTF-8", "UTF-8")) %>% 
+    grep("https://lingua.ge/verbs/", ., value = TRUE)
+  j <- j+1L
+}
+
+# Getting verbs information
+banch_of_verb_link <- verb_links_list %>% reduce(c)
+
+pb <- progress_bar$new(
+  format = "[:bar] :percent ETA: :eta",
+  total = length(banch_of_verb_link)
+)
+
+conjugate_meta <- list()
+conjugate_verbs <- list()
+k <- 1L
+
+for (i in 1:length(banch_of_verb_link)) {
+  
+  lingua_html <- read_html_iter(banch_of_verb_link[i])
+  if (is.list(lingua_html)) {
+    
+    # web page parsing
+    html_div_block <- html_elements(lingua_html, "div")
+    html_div_class <- html_div_block %>% html_attr("class")
+    verbs_position <- which(html_div_class == "elementor-widget-container")
+    raw_div_vector <- html_div_block[verbs_position] %>% html_text2()
+    
+    div_start_line <- which(raw_div_vector == "Home » Conjugation")[1]
+    clear_div_vector <- raw_div_vector[(div_start_line+1):length(raw_div_vector)]
+    
+    eng_translation <- str_remove(clear_div_vector[1], "(v.t.i.)|(v.i.)|(v.t.)") %>% str_squish()
+    # wrd_origin <- clear_div_vector[4]
+    conjugate_meta[[k]] <- 
+      tibble(
+        meta = clear_div_vector[2*(1:8)+1],
+        info = clear_div_vector[2*(1:8)+2]
+      ) %>% 
+      rbind(c("English", eng_translation), .) %>% 
+      filter(meta %in% c("English", "Infinitive", "Preverb", "Participle")) %>% 
+      pivot_wider(names_from = meta, values_from = info) %>% 
+      rename_all(tolower) %>% 
+      # filter(info != "") %>% 
+      add_column(lid = !!k, .before = 1) %>% 
+      mutate(link = !!banch_of_verb_link[i])
+    
+    num_form_vector1 <- c(2:4, 6:8)
+    num_form_vector2 <- c(22, 31, 40, 51, 60, 69, 80, 89, 100, 109, 118)
+    
+    conjugate_tenses <- 
+      map(num_form_vector2, 
+             ~ tibble(
+               word  = clear_div_vector[num_form_vector1 + .x],
+               numb = c(rep(1, 3), rep(2, 3)),
+               prsn = rep(1:3, 2),
+               tense = str_remove_all(clear_div_vector[.x], "[ა-ჰ]") %>% str_squish(),
+             )
+      ) %>% reduce(add_row)
+    
+    num_form_vector1 <- c(2:3, 5:7)
+    num_form_vector2 <- c(129) # , 137, 145)
+    
+    conjugate_imperative <- 
+      map(num_form_vector2, 
+             ~ tibble(
+               word  = clear_div_vector[num_form_vector1 + .x],
+               numb  = c(rep(1, 2), rep(2, 3)),
+               prsn  = c(2:3, 1:3),
+               tense = str_remove_all(clear_div_vector[.x], "[ა-ჰ]") %>% str_squish()
+             )
+      ) %>% reduce(add_row)
+    
+    conjugate_verbs[[k]] <- add_row(conjugate_tenses, conjugate_imperative) %>% 
+      add_column(lid = !!k, .before = 1) %>% 
+      filter(word != "")
+    
+    k <- k + 1 
+  }
+  pb$tick()
+}
+
+# saveRDS(conjugate_meta, "conjugate_meta.RData")
+# saveRDS(conjugate_verbs, "conjugate_verbs.RData")
+
+verb_form_dict <- merge(verb_tense_data, verb_forms_data) %>% 
+  mutate(tid = paste0("V", sprintf("%02d", num), id)) %>% 
+  select(tid, tense, numb, prsn) %>% 
+  arrange(tid)
+
+conjugate_verbs_df <- 
+  conjugate_verbs %>% 
+  reduce(add_row)
+
+conjugate_meta_df <- 
+  conjugate_meta %>% 
+  reduce(add_row)
+
+# adding lost infinitve
+conjugate_meta_df %>% 
+  filter(infinitive != "") %>% 
+  anti_join(raw_ka_words, by = c("infinitive" = "wrd")) %>% 
+  select(wrd = infinitive) %>% 
+  dbAppendTable(conn, "ka_words_sample", .)
+  
+raw_ka_words <- dbGetQuery(conn, "SELECT * FROM ka_words_sample")
+eng_form_data <- conjugate_meta_df %>% 
+  filter(infinitive != "") %>% 
+  inner_join(raw_ka_words, by = c("infinitive" = "wrd")) %>% 
+  inner_join(ka_word_tidy_dict, by = "wid") %>%
+  filter(pos == "verb", tid == "X000", num == 1L) %>% 
+  select(wid, english)
+
+dbExecute(conn, "UPDATE ka_word_tidy_dict SET eng = ? WHERE wid = ? and tid = 'X000' and num = 1 and pos = 'verb'", params = list(eng_form_data$english, eng_form_data$wid))
+
+mnum_df <- ka_word_tidy_dict %>% 
+  group_by(wid) %>% 
+  summarise(mnum = max(num))
+
+conjugate_meta_df %>% 
+  filter(infinitive != "") %>% 
+  inner_join(raw_ka_words, by = c("infinitive" = "wrd")) %>% 
+  anti_join(filter(ka_word_tidy_dict, pos == "verb", tid == "X000"), by = "wid") %>% 
+  left_join(mnum_df, by = "wid") %>% 
+  mutate(tid = "X000", source = "L1", pos = "verb", oid = wid, eng = english, num = coalesce(mnum, 0L) + 1L, word = infinitive) %>% 
+  select(wid, num, pos, tid, oid, word, source, eng) %>% 
+  dbAppendTable(conn, "ka_word_tidy_dict", .)
+
+
+ka_word_tidy_dict <- dbGetQuery(conn, "SELECT * FROM ka_word_tidy_dict")
+
+conjugate_verbs_df %>% 
+  distinct(word) %>% 
+  nrow()
 
 
 ganmarteba_words_changing <- ganmarteba_words_ext %>% 
