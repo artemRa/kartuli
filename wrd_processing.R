@@ -563,12 +563,75 @@ conjugate_meta_df %>%
   select(wid, num, pos, tid, oid, word, source, eng) %>% 
   dbAppendTable(conn, "ka_word_tidy_dict", .)
 
-
-ka_word_tidy_dict <- dbGetQuery(conn, "SELECT * FROM ka_word_tidy_dict")
-
 conjugate_verbs_df %>% 
+  filter(!str_detect(word, "[[:space:]]")) %>% 
+  filter(str_detect(word, "[^ა-ჰ]")) %>% 
   distinct(word) %>% 
-  nrow()
+  view()
+
+
+unnest_verbs <- conjugate_verbs_df %>% 
+  filter(!str_detect(word, "[[:space:]]")) %>% 
+  filter(str_detect(word, "\\/")) %>% 
+  mutate(word = map(word, ~ str_split(.x, "/"))) %>%
+  unnest(word) %>%
+  mutate(word = map(word, ~ tibble(word = .x))) %>%
+  unnest(word) %>% 
+  mutate_at(vars(word), str_squish) %>% 
+  filter(word != "")
+
+bracket_verbs <- conjugate_verbs_df %>% 
+  filter(!str_detect(word, "[[:space:]]")) %>% 
+  filter(str_detect(word, "\\)[ა-ჰ]"))
+
+cleared_verb_forms <- conjugate_verbs_df %>% 
+  filter(!str_detect(word, "[[:space:]]")) %>% 
+  mutate_at(vars(word), str_remove_all, pattern = "\\*") %>% 
+  filter(!str_detect(word, "[^ა-ჰ]")) %>% 
+  add_row(mutate_at(bracket_verbs, vars(word), str_remove_all, pattern = "[[:punct:]]")) %>% 
+  add_row(mutate_at(bracket_verbs, vars(word), str_remove_all, pattern = "\\(.*\\)")) %>% 
+  add_row(unnest_verbs) %>% 
+  distinct()
+  
+cleared_verb_forms %>% 
+  distinct(word) %>% 
+  anti_join(raw_ka_words, by = c("word" = "wrd")) %>% 
+  select(wrd = word) %>%
+  dbAppendTable(conn, "ka_words_sample", .)
+
+raw_ka_words <- dbGetQuery(conn, "SELECT * FROM ka_words_sample")
+ka_word_tidy_dict <- dbGetQuery(conn, "SELECT * FROM ka_word_tidy_dict")
+mnum_df <- ka_word_tidy_dict %>% group_by(wid) %>% summarise(mnum = max(num))
+origin_df <- conjugate_meta_df %>% 
+  filter(infinitive != "") %>% 
+  inner_join(raw_ka_words, by = c("infinitive" = "wrd")) %>%
+  select(lid, wid)
+
+
+cleared_verb_forms %>% 
+  inner_join(verb_form_dict, by = c("tense", "numb", "prsn")) %>% 
+  inner_join(origin_df, by = "lid") %>% 
+  rename(oid = wid) %>%
+  inner_join(raw_ka_words, by = c("word" = "wrd")) %>% 
+  left_join(mnum_df, by = "wid") %>% 
+  group_by(wid) %>% 
+  mutate(num = row_number(tid) + coalesce(mnum, 0L)) %>% 
+  ungroup() %>% 
+  mutate(source = "L1", pos = "verb") %>% 
+  select(wid, num, pos, tid, oid, word, source) %>% 
+  dbAppendTable(conn, "ka_word_tidy_dict", .)
+
+conjugate_meta_df %>% 
+  filter(participle != "") %>% 
+  view()
+
+
+ka_word_tidy_dict %>% 
+  filter(tid == "V011") %>% 
+  inner_join(select(ka_word_tidy_dict, wid, word, eng), by = c("oid" = "wid")) %>% 
+  arrange(wid) %>% 
+  view()
+
 
 
 ganmarteba_words_changing <- ganmarteba_words_ext %>% 
