@@ -13,6 +13,7 @@ config <- yaml::read_yaml("secret.yaml")
 verb_tense_data <- gsheet::gsheet2tbl(config$glink1)
 verb_forms_data <- gsheet::gsheet2tbl(config$glink3)
 extra_word_forms <- gsheet::gsheet2tbl(config$glink2)
+verified_ending <- gsheet::gsheet2tbl(config$glink4)
 
 # export pre-clearing Georgian words 
 conn <- DBI::dbConnect(RSQLite::SQLite(), dbname = "kartuli.db")
@@ -667,9 +668,148 @@ participle_df_clear %>%
   dbAppendTable(conn, "ka_word_tidy_dict", .)
   
 
+# Word building ----
+# N1: custom code
+
+ka_word_tidy_dict <- dbGetQuery(conn, "SELECT * FROM ka_word_tidy_dict")
+raw_ka_words <- dbGetQuery(conn, "SELECT * FROM ka_words_sample")
+
+relative_forms <- ka_word_tidy_dict %>% 
+  filter(tid == "N000")
+
+alternative_forms <- ka_word_tidy_dict %>% 
+  filter(tid == "X001")
+
+origin_forms_p1 <- ka_word_tidy_dict %>% 
+  filter(oid == wid) %>% 
+  filter(tid == "X000") %>% 
+  anti_join(relative_forms, by = c("oid", "pos")) %>% 
+  filter(pos %in% c("noun", "adj"))
+
+origin_forms_p2 <- ka_word_tidy_dict %>% 
+  filter(oid == wid) %>% 
+  inner_join(select(relative_forms, oid, pos), by = c("oid", "pos")) %>% 
+  filter(tid == "X000")
+
+origin_forms <- add_row(origin_forms_p1, origin_forms_p2) %>% 
+  group_by(wid) %>% filter(num == min(num)) %>% ungroup() %>% 
+  arrange(wid)
+
+origin_wid_list <- origin_forms$wid
+unmatched_words <- raw_ka_words %>% anti_join(ka_word_tidy_dict, by = "wid")
+
+
+word_list_temp0 <- list()
+word_list_temp1 <- list()
+word_list_temp2 <- list()
+word_list1 <- list()
+word_list2 <- list()
+i <- 1L
+
+aris <- c("ა", "აა", "აც", "ააც", "ც")
+aris_ending0 <- paste0("(", aris, ")$", collapse = "|")
+aris_ending1 <- tibble(tid = "N101", ending = !!aris) %>% add_row(tid = "N100", ending = "")
+aris_ending2 <- tibble(tid = "N001", ending = !!aris)
+
+pb <- progress_bar$new(
+  format = "[:bar] :percent ETA: :eta",
+  total = length(origin_wid_list)
+)
+
+for (wid in origin_wid_list) {
+  
+  wrd0 <- pull(filter(origin_forms, wid == !!wid), word)
+  wrd1 <- pull(filter(relative_forms, oid == !!wid), word)
+  plur <- nrow(filter(origin_forms, wid == !!wid, pos %in% c("noun", "adj"))) > 0
+  
+  plural_vector <- 
+    c(
+      paste0(wrd0, "ები"),
+      paste0(str_remove(wrd0, "[იოუეა]$"), "ები"),
+      paste0(str_remove(wrd1, "(ს$)|(ის$)"), "ები"),
+      paste0(str_remove(wrd1, "(ს$)|([იოუეა]ს$)"), "ები")
+    ) %>% 
+    unique()
+  
+  root_vector <- 
+    c(
+      wrd0,
+      str_remove(wrd0, "ი$"),
+      str_remove(wrd0, "[იოუეა]$"),
+      str_remove(wrd1, "(ს$)|(ის$)"),
+      str_remove(wrd1, "(ს$)|([იოუეა]ს$)")
+    ) %>% 
+    unique()
+  
+  # Plural forms
+  if (plur) {
+    
+    for (j in 1:length(plural_vector)) {
+      
+      word_list_temp0[[j]] <- tibble(wrd = plural_vector[j]) %>% 
+        merge(aris_ending1) %>%
+        mutate(wrd = paste0(wrd, coalesce(ending, ""))) %>% 
+        inner_join(select(unmatched_words, wid, wrd), by = "wrd") %>% 
+        select(-ending) %>% 
+        distinct()
+      
+      plroot <- str_remove(plural_vector[j], ".$")
+      word_list_temp1[[j]] <- unmatched_words %>% select(wid, wrd) %>%
+        anti_join(word_list_temp0[[j]], by = "wid") %>% 
+        filter(str_detect(wrd, paste0("^", plroot))) %>%
+        mutate(ending = str_remove(wrd, paste0("^", plroot))) %>%
+        filter(str_length(ending) < 10L) %>%
+        mutate(., ending = str_remove(ending, !!aris_ending0))  %>% 
+        inner_join(verified_ending, by = "ending") %>%
+        select(-c(ending, name)) %>% distinct() %>% 
+        mutate_at(vars(tid), str_replace, pattern = "^N0", replacement = "N1")
+    }
+    
+    trusted_word_num <- which.max(map_int(word_list_temp1, nrow))[1]
+    word_list1[[i]] <- rbind(word_list_temp0[[trusted_word_num]], word_list_temp1[[trusted_word_num]]) %>% 
+      add_column(oid = !!wid, .before = 1L)
+    unmatched_words <- unmatched_words %>% anti_join(word_list1[[i]], by = "wid")
+    
+    word_list_temp0 <- list()
+    word_list_temp1 <- list()
+  }
+  
+  # Singular forms
+  word_list_temp2[[1]] <- tibble(wrd = !!wrd0) %>% 
+    merge(aris_ending2) %>%
+    mutate(wrd = paste0(wrd, coalesce(ending, ""))) %>% 
+    inner_join(select(unmatched_words, wid, wrd), by = "wrd") %>% 
+    select(-ending) %>% 
+    distinct()
+  
+  for (j in 1:length(root_vector)) {
+    
+    sgroot <- root_vector[j]
+    word_list_temp2[[j+1]] <- unmatched_words %>% select(wid, wrd) %>%
+      anti_join(word_list_temp2[[1]], by = "wid") %>% 
+      filter(str_detect(wrd, paste0("^", sgroot))) %>%
+      mutate(ending = str_remove(wrd, paste0("^", sgroot))) %>%
+      filter(str_length(ending) < 10L) %>%
+      mutate(., ending = str_remove(ending, !!aris_ending0))  %>% 
+      inner_join(verified_ending, by = "ending") %>%
+      select(-c(ending, name)) %>% distinct() 
+  }
+  
+  word_list2[[i]] <- reduce(word_list_temp2, rbind) %>% add_column(oid = !!wid, .before = 1L)
+  unmatched_words <- unmatched_words %>% anti_join(word_list2[[i]], by = "wid")
+  word_list_temp2 <- list()
+  
+  i <- i + 1
+  pb$tick()
+  
+}
 
 
 
+
+
+
+# OLD ----
 
 ka_word_tidy_dict %>% 
   filter(tid == "V011") %>% 
