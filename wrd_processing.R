@@ -804,6 +804,87 @@ for (wid in origin_wid_list) {
   
 }
 
+super_word_list <- rbind(reduce(word_list1, rbind), reduce(word_list2, rbind))
+origin_forms_clear <- origin_forms %>% 
+  group_by(wid) %>% 
+  arrange(num) %>% 
+  filter(row_number() == 1L) %>% 
+  ungroup() %>% 
+  select(wid, pos)
+
+super_word_list %>% distinct() %>% 
+  left_join(origin_forms_clear, by = c("oid" = "wid")) %>% 
+  mutate(source = "N1", word = wrd, num = 1L) %>% 
+  select(wid, num, pos, tid, oid, word, source) %>% 
+  dbAppendTable(conn, "ka_word_tidy_dict", .)
+
+conn <- DBI::dbConnect(RSQLite::SQLite(), dbname = "kartuli.db")
+raw_ka_words <- dbGetQuery(conn, "SELECT * FROM ka_words_sample")
+ka_word_tidy_dict <- dbGetQuery(conn, "SELECT * FROM ka_word_tidy_dict")
+
+raw_ka_words %>% 
+  anti_join(ka_word_tidy_dict, by = "wid") %>% 
+  arrange(wid) %>% 
+  head(100) %>% 
+  view("words")
+
+
+word_frequency <- ka_word_tidy_dict %>% 
+  filter(num == 1) %>% 
+  left_join(raw_ka_words, by = "wid") %>% 
+  group_by(oid) %>% 
+  summarise_at(vars(frq, src), sum, na.rm = T)
+  
+ka_word_tidy_dict %>% 
+  filter(num == 1, tid == "X000", pos == "verb") %>% 
+  left_join(word_frequency, by = "oid") %>% 
+  arrange(desc(frq)) %>% 
+  view("verbs")
+
+
+
+raw_ka_sentense <- dbGetQuery(conn, 'select id, txt from ka_sentences')
+words_from_sentense <- raw_ka_sentense$txt %>% 
+  str_replace_all("[[:punct:]]", " ") %>% 
+  str_split("\\s+") %>% 
+  map(~ .[str_detect(.x, pattern = "[ა-ჰ]")])
+
+words_from_sentense_df <- select(raw_ka_sentense, id) %>% 
+  add_column(wrd = words_from_sentense) %>% 
+  unnest(wrd) %>% 
+  inner_join(select(raw_ka_words, wid, wrd), by = "wrd")
+
+
+difficulty <- words_from_sentense_df %>% 
+  group_by(id) %>% 
+  summarise(maxy = max(wid), cnt = n())
+  
+
+
+raw_ka_words %>% 
+  filter(wid == 315) %>% 
+  inner_join(words_from_sentense_df, by = "wid") %>%
+  inner_join(difficulty, by = "id") %>% 
+  filter(cnt > 3, maxy < 5000) %>% 
+  distinct(id, maxy) %>% 
+  arrange(maxy) %>%
+  inner_join(raw_ka_sentense, by = "id") %>% 
+  view()
+
+
+
+ka_word_tidy_dict %>% 
+  filter(oid == 1524) %>% 
+  inner_join(words_from_sentense_df, by = "wid") %>%
+  inner_join(difficulty, by = "id") %>% 
+  filter(cnt > 3, maxy < 5000) %>% 
+  distinct(id, maxy) %>% 
+  arrange(maxy) %>%
+  inner_join(raw_ka_sentense, by = "id") %>% 
+  view()
+  
+
+
 
 
 
