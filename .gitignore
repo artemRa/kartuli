@@ -10,3 +10,5 @@
 *.exe
 *.csv
 *.yaml
+*.bak
+*.RData
