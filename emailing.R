@@ -38,7 +38,15 @@ freq_oid %>%
   head(500) %>% 
   view("verbs")
 
+ka_word_tidy_dict %>% 
+  filter(oid == 232, pos == "verb") %>% 
+  inner_join(raw_ka_words, by = "wid") %>% 
+  view("detailed")
+  
 
+ka_word_tidy_dict %>% 
+  filter(word == "ვგრძნობ") %>% 
+  view()
 
 
 raw_ka_sentense <- dbGetQuery(conn, 'select id, txt from ka_sentences')
@@ -56,44 +64,6 @@ sentense_hardness <- words_from_sentense_df %>%
   inner_join(topn_wrd_rating, by = "wid") %>% 
   group_by(id) %>% 
   summarise(maxy = max(topn), cnt = n())
-
-meaning_temples <- 
-  list(
-    '\U0001F1F7\U0001F1FA {text}',
-    '\U0001F1EC\U0001F1E7 {text}',
-    '\U0001F1EC\U0001F1EA <small>{text}</small>'
-  )
-
-my_verb_oid <- 4252
-header_table <- ka_word_tidy_dict %>% 
-  filter(pos == "verb", num == 1L, wid == !!my_verb_oid)
-
-header_label <- header_table %>% 
-  left_join(freq_oid, by = c("oid", "pos")) %>% 
-  left_join(part_of_speach_dict, by = c("pos" = "eng")) %>% 
-  mutate(heading = glue("<tt><b>\U0001F525 #{topn}</b> {geo}</tt>")) %>% 
-  pull(heading)
-  
-header <- header_table %>% 
-  glue_data('<h1><b><span style="color: #BA2649">{word}</span></b></h1>')
-  
-main_forms <- ka_word_tidy_dict %>% 
-  filter(pos == "verb", num == 1L, oid == !!my_verb_oid) %>% 
-  filter(tid %in% c("V011", "V031", "V041")) %>% 
-  select(tid, word) %>% 
-  arrange(tid) %>% 
-  pull(word) %>% 
-  paste(collapse = " \u2192 ") %>% 
-  paste0("<h3>", ., "</h3>")
-
-meaning <- header_table %>% 
-  select(rus, eng, desc) %>% 
-  map2(meaning_temples,
-       ~ ifelse(is.na(.x), NA, glue(.y, text = .x))
-  ) %>% 
-  keep(~!is.na(.)) %>%
-  paste0(sep = "<br>", collapse = "")
-
 
 tense_emoji <- 
   tribble(
@@ -117,8 +87,65 @@ num_emoji <- tribble(
   6, "\u0033\ufe0f\u20e3\U0001F465"
 )
 
+hardness_emoji <- 
+  tribble(
+    ~eid, ~emoji,
+    1, "<h3>\U0001F60A მარტივი</h3>", # "😊" (Easy)
+    2, "<h3>\U0001F610 ზომიერი</h3>", # "😐" (Moderate)
+    3, "<h3>\U0001F615 რთული</h3>",  # "😕" (Challenging)
+    4, "<h3>\U0001F630 უფრო რთული</h3>", # "😰" (Difficult)
+    5, "<h3>\U0001F62B ძალიან რთული</h3>", # "😫" (Very Difficult)
+  )
+
+# extra details
+html_footer <- paste(
+  "Kartuli v1.1", "<br>",
+  "Created by Artem R.", "<br>",
+  "\U0001F419",
+  '[**GitHub**](https://github.com/artemRa/kartuli)'
+)
 
 
+meaning_temples <- 
+  list(
+    '\U0001F1F7\U0001F1FA {text}',
+    '\U0001F1EC\U0001F1E7 {text}',
+    '\U0001F1EC\U0001F1EA <small>{text}</small>'
+  )
+
+
+my_verb_oid <- 1094
+header_table <- ka_word_tidy_dict %>% 
+  filter(pos == "verb", num == 1L, wid == !!my_verb_oid)
+
+header_label <- header_table %>% 
+  left_join(freq_oid, by = c("oid", "pos")) %>% 
+  left_join(part_of_speach_dict, by = c("pos" = "eng")) %>% 
+  mutate(heading = glue("<tt><b>\U0001F525 #{topn}</b> {geo}</tt>")) %>% 
+  pull(heading)
+  
+header <- header_table %>% 
+  glue_data('<h1><b><span style="color: #BA2649">{word}</span></b></h1>')
+  
+main_forms <- ka_word_tidy_dict %>% 
+  filter(pos == "verb", oid == !!my_verb_oid) %>% 
+  filter(tid %in% c("V011", "V031", "V041")) %>% 
+  group_by(tid) %>% 
+  filter(row_number(num) == 1L) %>% 
+  ungroup() %>% 
+  select(tid, word) %>% 
+  arrange(tid) %>% 
+  pull(word) %>% 
+  paste(collapse = " \u2192 ") %>% 
+  paste0("<h3>", ., "</h3>")
+
+meaning <- header_table %>% 
+  select(rus, eng, desc) %>% 
+  map2(meaning_temples,
+       ~ ifelse(is.na(.x), NA, glue(.y, text = .x))
+  ) %>% 
+  keep(~!is.na(.)) %>%
+  paste0(sep = "<br>", collapse = "")
 
 popular_form <- ka_word_tidy_dict %>% 
   filter(pos == "verb", num == 1L, oid == !!my_verb_oid) %>% 
@@ -146,35 +173,26 @@ popular_form <- ka_word_tidy_dict %>%
 
 part2 <- paste0("<h2>სიხშირე</h2>", popular_form)
 
-
-hardness_emoji <- 
-  tribble(
-    ~eid, ~emoji,
-    1, "<h3>\U0001F60A მარტივი</h3>", # "😊" (Easy)
-    2, "<h3>\U0001F610 ზომიერი</h3>", # "😐" (Moderate)
-    3, "<h3>\U0001F615 რთული</h3>",  # "😕" (Challenging)
-    4, "<h3>\U0001F630 უფრო რთული</h3>", # "😰" (Difficult)
-    5, "<h3>\U0001F62B ძალიან რთული</h3>", # "😫" (Very Difficult)
-  )
-
 examples_df <- ka_word_tidy_dict %>% 
   filter(pos == "verb", num == 1L, oid == !!my_verb_oid) %>% 
+  mutate(vsimple = !str_detect(tid, "V") | as.numeric(str_sub(tid, 2, 3)) <= 6L) %>% 
   inner_join(words_from_sentense_df, by = "wid") %>%
   inner_join(sentense_hardness, by = "id") %>% 
   filter(cnt > 3, maxy < 1000) %>% 
-  # left_join(hardness_emoji, by = "eid") %>% 
-  distinct(id, maxy, cnt, wid, word) %>%
+  distinct(id, maxy, cnt, wid, word, vsimple) %>%
   group_by(wid) %>%
   arrange(maxy) %>%
   filter(row_number() <= 2L) %>%
   ungroup() %>% 
   arrange(maxy, cnt, wid) %>%
   inner_join(raw_ka_sentense, by = "id") %>% 
-  mutate(txt = str_squish(str_remove(txt, "^[[:punct:]]"))) %>% 
-  group_by(txt) %>% 
-  sample_n(1L) %>% 
-  ungroup() %>% 
-  mutate(txt = paste("\u2022", str_replace_all(txt, word, glue('<span style="color: #BA2649">{word}</span>')))) %>% 
+  mutate(txt = str_squish(str_remove(txt, "^[^ა-ჰ0-9]+"))) %>%
+  mutate(tech_txt = str_squish(str_remove_all(txt, "[[:punct:]]"))) %>% 
+  group_by(tech_txt) %>% 
+  sample_n(1L) %>%
+  ungroup() %>%
+  mutate(clr = if_else(vsimple, "#BA2649", "#2649BA")) %>% 
+  mutate(txt = paste("\u2022", str_replace_all(txt, word, glue('<span style="color: {clr}">{word}</span>')))) %>% 
   mutate(eid = cut(maxy, breaks = c(0, 250, 500, 1000, 5000, Inf), labels = FALSE)) %>%
   group_by(eid) %>% 
   filter(row_number() <= 5L) %>% 
@@ -190,22 +208,60 @@ examples <- examples_df %>%
 
 part3 <- paste0("<h2>მაგალითები</h2>", examples)
 
-# extra details
-html_footer <- paste(
-  "Kartuli v1.0", "<br>",
-  "Created by Artem R.", "<br>",
-  "\U0001F419",
-  '[**GitHub**](https://github.com/artemRa/kartuli)'
-)
+# just one tense forms
+
+just_one_tense_header <- "<br><br><hr><h1>აწმყო \u231B</h1>"
+
+just_one_tense_forms <- ka_word_tidy_dict %>% 
+  filter(pos == "verb", oid == !!my_verb_oid) %>% 
+  filter(str_detect(tid, "V01")) %>%
+  mutate(
+    pid = case_when(
+      !str_detect(tid, "V") ~ as.integer(NA), 
+      T ~ as.integer(str_sub(tid, 4, 4))
+    )) %>% 
+  left_join(num_emoji, by = "pid") %>%
+  select(pid, numji, word) %>% 
+  nest(data = word) %>% 
+  mutate(words = map_chr(data, ~ paste0(glue_data(., "{word}"), collapse = ", "))) %>%
+  arrange(pid) %>% 
+  glue_data("\u2022 <small>{numji}</small> {words}") %>% 
+  paste(collapse = "<br>")
+
+just_one_tense_examples <- ka_word_tidy_dict %>% 
+  filter(pos == "verb", oid == !!my_verb_oid) %>% 
+  filter(str_detect(tid, "V01")) %>%
+  inner_join(words_from_sentense_df, by = "wid") %>%
+  inner_join(sentense_hardness, by = "id") %>% 
+  filter(cnt > 3, maxy < 1000) %>% 
+  distinct(id, maxy, cnt, wid, word) %>%
+  group_by(wid) %>%
+  arrange(maxy) %>%
+  filter(row_number() <= 2L) %>%
+  ungroup() %>% 
+  arrange(maxy, cnt, wid) %>%
+  inner_join(raw_ka_sentense, by = "id") %>% 
+  mutate(txt = str_squish(str_remove(txt, "^[^ა-ჰ0-9]+"))) %>%
+  mutate(tech_txt = str_squish(str_remove_all(txt, "[[:punct:]]"))) %>% 
+  group_by(tech_txt) %>% 
+  sample_n(1L) %>% 
+  ungroup() %>%
+  mutate(txt = paste("\u2022", str_replace_all(txt, word, glue('<span style="color: #BA2649">{word}</span>')))) %>% 
+  filter(row_number() <= 5L) %>% 
+  ungroup() %>% 
+  glue_data("{txt}") %>% 
+  paste0(collapse = "<br>")
+
+just_one_tense_part2 <- paste0("<h2>მაგალითები</h2>", just_one_tense_examples)
 
 composed_email <- 
   compose_email(
     header = md(header_label),
-    body = list(md(header), md(main_forms), md(meaning), md(part2), md(part3)),
-    # body = list(md(email_words_list), md(html_labels), md(html_checking), md(html_praise)),
+    body = list(md(header), md(main_forms), md(meaning), md(part2), md(part3),
+                md(just_one_tense_header), md(just_one_tense_forms), md(just_one_tense_part2)
+                ),
     footer = md(html_footer)
   )
-
 
 composed_email
 
