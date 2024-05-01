@@ -5,6 +5,8 @@ library(DBI)
 library(tidyverse)
 
 email_secrect <- yaml::read_yaml("email.yaml") # secret config based on list() structure
+config <- yaml::read_yaml("secret.yaml")
+verb_tense_data <- gsheet::gsheet2tbl(config$glink1)
 conn <- DBI::dbConnect(RSQLite::SQLite(), dbname = "kartuli.db")
 raw_ka_words <- dbGetQuery(conn, "SELECT * FROM ka_words_sample")
 ka_word_tidy_dict <- dbGetQuery(conn, "SELECT * FROM ka_word_tidy_dict")
@@ -99,7 +101,7 @@ hardness_emoji <-
 
 # extra details
 html_footer <- paste(
-  "Kartuli v1.1", "<br>",
+  "Kartuli v1.2", "<br>",
   "Created by Artem R.", "<br>",
   "\U0001F419",
   '[**GitHub**](https://github.com/artemRa/kartuli)'
@@ -206,59 +208,97 @@ examples <- examples_df %>%
   glue_data("{emoji} <p>{col}</p>") %>% 
   paste0(collapse = "")
 
+already_used_examples <- select(examples_df, id)
+
 part3 <- paste0("<h2>მაგალითები</h2>", examples)
 
 # just one tense forms
 
-just_one_tense_header <- "<br><br><hr><h1>აწმყო \u231B</h1>"
+just_one_tense_block <- list()
+j <- 1L
+for (tenseid in 1:5) {
+  
+  just_one_tense_header <- verb_tense_data %>% 
+    filter(num == !!tenseid) %>% 
+    mutate(eid = sprintf("%02d", num)) %>% 
+    inner_join(tense_emoji, by = "eid") %>% 
+    glue_data("<br><br><hr><h1>{tense_kartulad} {tenseji}</h1>
+              \U0001F1F7\U0001F1FA {tense_rusulad}<br>
+              \U0001F1EC\U0001F1E7 {tense}<br><br>")
+  
+  extra_tense <- ka_word_tidy_dict %>% 
+    filter(pos == "verb", oid == !!my_verb_oid) %>%
+    filter(str_detect(tid, "V")) %>% 
+    mutate(tenseid = as.integer(substr(tid, 2, 3))) %>% 
+    filter(tenseid != !!tenseid, tenseid <= 5L) %>%
+    mutate(eid = sprintf("%02d", tenseid)) %>% 
+    inner_join(tense_emoji, by = "eid") %>% 
+    select(wid, tenseji) %>% 
+    nest(data = tenseji) %>% 
+    mutate(extra_tense = map_chr(data, ~ paste0(glue_data(., "{tenseji}"), collapse = ", "))) %>% 
+    select(wid, extra_tense)
+  
+  just_one_tense_forms <- ka_word_tidy_dict %>% 
+    filter(pos == "verb", oid == !!my_verb_oid) %>% 
+    filter(str_detect(tid, paste0("V", sprintf("%02d", !!tenseid)))) %>%
+    mutate(
+      pid = case_when(
+        !str_detect(tid, "V") ~ as.integer(NA), 
+        T ~ as.integer(str_sub(tid, 4, 4))
+      )) %>% 
+    left_join(num_emoji, by = "pid") %>%
+    left_join(extra_tense, by = "wid") %>% 
+    mutate(
+      warning = if_else(is.na(extra_tense),"", paste0("<small>", extra_tense, "</small>")),
+      word = paste(word, warning)
+    ) %>% 
+    select(pid, numji, word) %>% 
+    nest(data = word) %>% 
+    mutate(words = map_chr(data, ~ paste0(glue_data(., "{word}"), collapse = ", "))) %>%
+    arrange(pid) %>% 
+    glue_data("&#x2013;&nbsp;&nbsp;<small>{numji}</small>&nbsp;&nbsp;{words}") %>% 
+    paste(collapse = "<br>")
+  
+  if (just_one_tense_forms != "") {
+    
+    just_one_tense_examples <- ka_word_tidy_dict %>% 
+      filter(pos == "verb", oid == !!my_verb_oid) %>% 
+      filter(str_detect(tid, paste0("V", sprintf("%02d", !!tenseid)))) %>%
+      inner_join(words_from_sentense_df, by = "wid") %>%
+      inner_join(sentense_hardness, by = "id") %>% 
+      anti_join(already_used_examples, by = "id") %>% 
+      anti_join(extra_tense, by = "wid") %>% 
+      filter(cnt > 3, maxy < 1000) %>% 
+      distinct(id, maxy, cnt, wid, word) %>%
+      group_by(wid) %>%
+      arrange(maxy) %>%
+      filter(row_number() <= 2L) %>%
+      ungroup() %>% 
+      arrange(maxy, cnt, wid) %>%
+      inner_join(raw_ka_sentense, by = "id") %>% 
+      mutate(txt = str_squish(str_remove(txt, "^[^ა-ჰ0-9]+"))) %>%
+      mutate(tech_txt = str_squish(str_remove_all(txt, "[[:punct:]]"))) %>% 
+      group_by(tech_txt) %>% 
+      sample_n(1L) %>% 
+      ungroup() %>%
+      mutate(txt = paste("\u2022", str_replace_all(txt, word, glue('<span style="color: #BA2649">{word}</span>')))) %>% 
+      filter(row_number() <= 5L) %>% 
+      ungroup() %>% 
+      glue_data("{txt}") %>% 
+      paste0(collapse = "<br>")
+    
+    just_one_tense_block[[j]] <- paste0(just_one_tense_header, just_one_tense_forms, "<h2>მაგალითები</h2>", just_one_tense_examples)
+    j <- j+1
+  }
+}
 
-just_one_tense_forms <- ka_word_tidy_dict %>% 
-  filter(pos == "verb", oid == !!my_verb_oid) %>% 
-  filter(str_detect(tid, "V01")) %>%
-  mutate(
-    pid = case_when(
-      !str_detect(tid, "V") ~ as.integer(NA), 
-      T ~ as.integer(str_sub(tid, 4, 4))
-    )) %>% 
-  left_join(num_emoji, by = "pid") %>%
-  select(pid, numji, word) %>% 
-  nest(data = word) %>% 
-  mutate(words = map_chr(data, ~ paste0(glue_data(., "{word}"), collapse = ", "))) %>%
-  arrange(pid) %>% 
-  glue_data("\u2022 <small>{numji}</small> {words}") %>% 
-  paste(collapse = "<br>")
 
-just_one_tense_examples <- ka_word_tidy_dict %>% 
-  filter(pos == "verb", oid == !!my_verb_oid) %>% 
-  filter(str_detect(tid, "V01")) %>%
-  inner_join(words_from_sentense_df, by = "wid") %>%
-  inner_join(sentense_hardness, by = "id") %>% 
-  filter(cnt > 3, maxy < 1000) %>% 
-  distinct(id, maxy, cnt, wid, word) %>%
-  group_by(wid) %>%
-  arrange(maxy) %>%
-  filter(row_number() <= 2L) %>%
-  ungroup() %>% 
-  arrange(maxy, cnt, wid) %>%
-  inner_join(raw_ka_sentense, by = "id") %>% 
-  mutate(txt = str_squish(str_remove(txt, "^[^ა-ჰ0-9]+"))) %>%
-  mutate(tech_txt = str_squish(str_remove_all(txt, "[[:punct:]]"))) %>% 
-  group_by(tech_txt) %>% 
-  sample_n(1L) %>% 
-  ungroup() %>%
-  mutate(txt = paste("\u2022", str_replace_all(txt, word, glue('<span style="color: #BA2649">{word}</span>')))) %>% 
-  filter(row_number() <= 5L) %>% 
-  ungroup() %>% 
-  glue_data("{txt}") %>% 
-  paste0(collapse = "<br>")
-
-just_one_tense_part2 <- paste0("<h2>მაგალითები</h2>", just_one_tense_examples)
 
 composed_email <- 
   compose_email(
     header = md(header_label),
     body = list(md(header), md(main_forms), md(meaning), md(part2), md(part3),
-                md(just_one_tense_header), md(just_one_tense_forms), md(just_one_tense_part2)
+                map(just_one_tense_block, md)
                 ),
     footer = md(html_footer)
   )
