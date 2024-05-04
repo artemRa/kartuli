@@ -8,6 +8,7 @@ email_secrect <- yaml::read_yaml("email.yaml") # secret config based on list() s
 config <- yaml::read_yaml("secret.yaml")
 verb_tense_data <- gsheet::gsheet2tbl(config$glink1)
 conn <- DBI::dbConnect(RSQLite::SQLite(), dbname = "kartuli.db")
+rarity_cutoff <- 5L
 raw_ka_words <- dbGetQuery(conn, "SELECT * FROM ka_words_sample")
 ka_word_tidy_dict <- dbGetQuery(conn, "SELECT * FROM ka_word_tidy_dict")
 
@@ -116,7 +117,7 @@ meaning_temples <-
   )
 
 
-my_verb_oid <- 1094
+my_verb_oid <- 143
 header_table <- ka_word_tidy_dict %>% 
   filter(pos == "verb", num == 1L, wid == !!my_verb_oid)
 
@@ -132,8 +133,9 @@ header <- header_table %>%
 main_forms <- ka_word_tidy_dict %>% 
   filter(pos == "verb", oid == !!my_verb_oid) %>% 
   filter(tid %in% c("V011", "V031", "V041")) %>% 
-  group_by(tid) %>% 
-  filter(row_number(num) == 1L) %>% 
+  left_join(raw_ka_words, by = "wid") %>% 
+  group_by(tid) %>%
+  filter(row_number(desc(frq)) == 1L) %>% 
   ungroup() %>% 
   select(tid, word) %>% 
   arrange(tid) %>% 
@@ -211,9 +213,9 @@ examples <- examples_df %>%
 already_used_examples <- select(examples_df, id)
 
 part3 <- paste0("<h2>მაგალითები</h2>", examples)
+right_border_text <- '<div style="text-align: right;color: #D0D0D0"><tt><br><big>0</big></tt></div>'
 
 # just one tense forms
-
 just_one_tense_block <- list()
 j <- 1L
 for (tenseid in 1:5) {
@@ -222,7 +224,7 @@ for (tenseid in 1:5) {
     filter(num == !!tenseid) %>% 
     mutate(eid = sprintf("%02d", num)) %>% 
     inner_join(tense_emoji, by = "eid") %>% 
-    glue_data("<br><br><hr><h1>{tense_kartulad} {tenseji}</h1>
+    glue_data("<hr><h1>{tense_kartulad} {tenseji}</h1>
               \U0001F1F7\U0001F1FA {tense_rusulad}<br>
               \U0001F1EC\U0001F1E7 {tense}<br><br>")
   
@@ -235,7 +237,7 @@ for (tenseid in 1:5) {
     inner_join(tense_emoji, by = "eid") %>% 
     select(wid, tenseji) %>% 
     nest(data = tenseji) %>% 
-    mutate(extra_tense = map_chr(data, ~ paste0(glue_data(., "{tenseji}"), collapse = ", "))) %>% 
+    mutate(extra_tense = map_chr(data, ~ paste0(glue_data(., "{tenseji}"), collapse = ","))) %>% 
     select(wid, extra_tense)
   
   just_one_tense_forms <- ka_word_tidy_dict %>% 
@@ -248,10 +250,13 @@ for (tenseid in 1:5) {
       )) %>% 
     left_join(num_emoji, by = "pid") %>%
     left_join(extra_tense, by = "wid") %>% 
+    left_join(raw_ka_words, by = "wid") %>%
     mutate(
       warning = if_else(is.na(extra_tense),"", paste0("<small>", extra_tense, "</small>")),
-      word = paste(word, warning)
+      rarity = if_else(coalesce(frq, 0) < rarity_cutoff, '<span style="color: #D0D0D0"><small><tt>[იშვიათი]</tt></small></span>', ""), 
+      word = str_squish(paste(word, warning, rarity))
     ) %>% 
+    arrange(word, desc(frq)) %>% 
     select(pid, numji, word) %>% 
     nest(data = word) %>% 
     mutate(words = map_chr(data, ~ paste0(glue_data(., "{word}"), collapse = ", "))) %>%
@@ -279,7 +284,7 @@ for (tenseid in 1:5) {
       mutate(txt = str_squish(str_remove(txt, "^[^ა-ჰ0-9]+"))) %>%
       mutate(tech_txt = str_squish(str_remove_all(txt, "[[:punct:]]"))) %>% 
       group_by(tech_txt) %>% 
-      sample_n(1L) %>% 
+      filter(row_number() <= 1L) %>% 
       ungroup() %>%
       mutate(txt = paste("\u2022", str_replace_all(txt, word, glue('<span style="color: #BA2649">{word}</span>')))) %>% 
       filter(row_number() <= 5L) %>% 
@@ -287,10 +292,70 @@ for (tenseid in 1:5) {
       glue_data("{txt}") %>% 
       paste0(collapse = "<br>")
     
-    just_one_tense_block[[j]] <- paste0(just_one_tense_header, just_one_tense_forms, "<h2>მაგალითები</h2>", just_one_tense_examples)
+    just_one_tense_examples_tidy <- if_else(just_one_tense_examples == "", "", paste0("<h2>მაგალითები</h2>", just_one_tense_examples))
+    right_border_text_iter <- glue('<div style="text-align: right;color: #D0D0D0"><tt><br><big>{j}</big></tt></div>')
+    just_one_tense_block[[j]] <- 
+      paste0(
+        just_one_tense_header, just_one_tense_forms, 
+        just_one_tense_examples_tidy, right_border_text_iter
+      )
     j <- j+1
   }
 }
+
+
+
+unique_words <- ka_word_tidy_dict %>% 
+  filter(pos == "verb", oid == !!my_verb_oid) %>% 
+  distinct(wid, word)
+
+sputnik_words_frq_pre <- unique_words %>% 
+  inner_join(words_from_sentense_df, by = "wid") %>% 
+  distinct(id, word) %>% 
+  inner_join(words_from_sentense_df, by = "id") %>% 
+  filter(word != wrd)
+
+sputnik_words_frq <- sputnik_words_frq_pre %>% 
+  count(wid) %>%
+  filter(n / sum(n) > 0.001)
+
+top_word_connection <- sputnik_words_frq %>% 
+  inner_join(raw_ka_words, by = "wid") %>% 
+  mutate_at(vars(n, frq), ~ .x / sum(.x)) %>% 
+  mutate(dev = n / frq) %>% 
+  arrange(desc(dev)) %>% 
+  filter(row_number() <= 5L) %>% 
+  select(wid, wrd, dev)
+
+sputnik_words <- top_word_connection %>% 
+  # mutate(dev2 = scales::number_format(prefix = "x", accuracy = 1)(dev)) %>% 
+  glue_data("<b>{wrd}</b>") %>% 
+  paste0(collapse = ", ") %>% 
+  paste0("<h3>\U0001F517 ხშირად ერთად</h3>", .)
+
+sputnik_examples <- top_word_connection %>% 
+  select(wid) %>% 
+  inner_join(sputnik_words_frq_pre, by = "wid") %>% 
+  inner_join(sentense_hardness, by = "id") %>% 
+  filter(cnt > 3, maxy < 3000) %>%
+  distinct(id, maxy, cnt, wid, wrd) %>% 
+  group_by(wid) %>%
+  arrange(maxy) %>%
+  filter(row_number() <= 1L) %>%
+  ungroup() %>% 
+  arrange(maxy, cnt, wid) %>%
+  inner_join(raw_ka_sentense, by = "id") %>% 
+  mutate(txt = str_squish(str_remove(txt, "^[^ა-ჰ0-9]+"))) %>%
+  mutate(tech_txt = str_squish(str_remove_all(txt, "[[:punct:]]"))) %>% 
+  group_by(tech_txt) %>% 
+  filter(row_number() <= 1L) %>%
+  ungroup() %>%
+  mutate(txt = paste("\u2022", str_replace_all(txt, wrd, glue('<u>{wrd}</u>')))) %>% 
+  ungroup() %>% 
+  glue_data("{txt}") %>% 
+  paste0(collapse = "<br>")
+
+
 
 
 
@@ -298,6 +363,8 @@ composed_email <-
   compose_email(
     header = md(header_label),
     body = list(md(header), md(main_forms), md(meaning), md(part2), md(part3),
+                md(sputnik_words), md(sputnik_examples),
+                md(right_border_text),
                 map(just_one_tense_block, md)
                 ),
     footer = md(html_footer)
@@ -316,3 +383,4 @@ composed_email %>%
       provider = "gmail"
     )
   )
+
