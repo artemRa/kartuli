@@ -68,6 +68,8 @@ sentense_hardness <- words_from_sentense_df %>%
   group_by(id) %>% 
   summarise(maxy = max(topn), cnt = n())
 
+
+
 tense_emoji <- 
   tribble(
     ~eid, ~tenseji,
@@ -117,7 +119,7 @@ meaning_temples <-
   )
 
 
-my_verb_oid <- 143
+my_verb_oid <- 3106
 header_table <- ka_word_tidy_dict %>% 
   filter(pos == "verb", num == 1L, wid == !!my_verb_oid)
 
@@ -218,7 +220,7 @@ right_border_text <- '<div style="text-align: right;color: #D0D0D0"><tt><br><big
 # just one tense forms
 just_one_tense_block <- list()
 j <- 1L
-for (tenseid in 1:5) {
+for (tenseid in 1:6) {
   
   just_one_tense_header <- verb_tense_data %>% 
     filter(num == !!tenseid) %>% 
@@ -310,7 +312,7 @@ unique_words <- ka_word_tidy_dict %>%
   distinct(wid, word)
 
 sputnik_words_frq_pre <- unique_words %>% 
-  inner_join(words_from_sentense_df, by = "wid") %>% 
+  inner_join(words_from_sentense_df, by = "wid") %>%
   distinct(id, word) %>% 
   inner_join(words_from_sentense_df, by = "id") %>% 
   filter(word != wrd)
@@ -323,21 +325,16 @@ top_word_connection <- sputnik_words_frq %>%
   inner_join(raw_ka_words, by = "wid") %>% 
   mutate_at(vars(n, frq), ~ .x / sum(.x)) %>% 
   mutate(dev = n / frq) %>% 
-  arrange(desc(dev)) %>% 
-  filter(row_number() <= 5L) %>% 
+  filter(src > 1) %>% 
+  arrange(desc(dev)) %>%
+  filter(row_number() <= 5L) %>%
   select(wid, wrd, dev)
 
-sputnik_words <- top_word_connection %>% 
-  # mutate(dev2 = scales::number_format(prefix = "x", accuracy = 1)(dev)) %>% 
-  glue_data("<b>{wrd}</b>") %>% 
-  paste0(collapse = ", ") %>% 
-  paste0("<h3>\U0001F517 ხშირად ერთად</h3>", .)
-
-sputnik_examples <- top_word_connection %>% 
+sputnik_examples_pre <- top_word_connection %>% 
   select(wid) %>% 
   inner_join(sputnik_words_frq_pre, by = "wid") %>% 
   inner_join(sentense_hardness, by = "id") %>% 
-  filter(cnt > 3, maxy < 3000) %>%
+  filter(cnt > 3, maxy < 1000) %>%
   distinct(id, maxy, cnt, wid, wrd) %>% 
   group_by(wid) %>%
   arrange(maxy) %>%
@@ -349,13 +346,19 @@ sputnik_examples <- top_word_connection %>%
   mutate(tech_txt = str_squish(str_remove_all(txt, "[[:punct:]]"))) %>% 
   group_by(tech_txt) %>% 
   filter(row_number() <= 1L) %>%
-  ungroup() %>%
+  ungroup()
+
+sputnik_words <- top_word_connection %>% 
+  inner_join(select(sputnik_examples_pre, wid), by = "wid") %>% 
+  glue_data("<b>{wrd}</b>") %>% 
+  paste0(collapse = ", ") %>% 
+  paste0("<h3>\U0001F517 ხშირად ერთად</h3>\u2705 ", .)
+
+sputnik_examples <- sputnik_examples_pre %>% 
   mutate(txt = paste("\u2022", str_replace_all(txt, wrd, glue('<u>{wrd}</u>')))) %>% 
   ungroup() %>% 
   glue_data("{txt}") %>% 
   paste0(collapse = "<br>")
-
-
 
 
 
