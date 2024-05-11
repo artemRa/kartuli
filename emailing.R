@@ -119,7 +119,7 @@ meaning_temples <-
   )
 
 
-my_verb_oid <- 3106
+my_verb_oid <- 1361
 header_table <- ka_word_tidy_dict %>% 
   filter(pos == "verb", num == 1L, wid == !!my_verb_oid)
 
@@ -137,7 +137,7 @@ main_forms <- ka_word_tidy_dict %>%
   filter(tid %in% c("V011", "V031", "V041")) %>% 
   left_join(raw_ka_words, by = "wid") %>% 
   group_by(tid) %>%
-  filter(row_number(desc(frq)) == 1L) %>% 
+  filter(row_number(desc(coalesce(frq, 0))) == 1L) %>% 
   ungroup() %>% 
   select(tid, word) %>% 
   arrange(tid) %>% 
@@ -228,7 +228,7 @@ for (tenseid in 1:6) {
     inner_join(tense_emoji, by = "eid") %>% 
     glue_data("<hr><h1>{tense_kartulad} {tenseji}</h1>
               \U0001F1F7\U0001F1FA {tense_rusulad}<br>
-              \U0001F1EC\U0001F1E7 {tense}<br><br>")
+              \U0001F1EC\U0001F1E7 {tense}<br>")
   
   extra_tense <- ka_word_tidy_dict %>% 
     filter(pos == "verb", oid == !!my_verb_oid) %>%
@@ -242,7 +242,7 @@ for (tenseid in 1:6) {
     mutate(extra_tense = map_chr(data, ~ paste0(glue_data(., "{tenseji}"), collapse = ","))) %>% 
     select(wid, extra_tense)
   
-  just_one_tense_forms <- ka_word_tidy_dict %>% 
+  just_one_tense_forms_pre <- ka_word_tidy_dict %>% 
     filter(pos == "verb", oid == !!my_verb_oid) %>% 
     filter(str_detect(tid, paste0("V", sprintf("%02d", !!tenseid)))) %>%
     mutate(
@@ -253,6 +253,20 @@ for (tenseid in 1:6) {
     left_join(num_emoji, by = "pid") %>%
     left_join(extra_tense, by = "wid") %>% 
     left_join(raw_ka_words, by = "wid") %>%
+    left_join(freq_oid, by = c("pos", "oid")) %>% 
+    mutate(share = frq / ofrq)
+  
+  just_one_tense_frequency <- just_one_tense_forms_pre %>% 
+    summarise(
+      share0 = sum(share, na.rm = T), 
+      share1 = sum(if_else(is.na(extra_tense), share, 0), na.rm = T)
+    ) %>%
+    mutate_all(~ if_else(. < 0.01, "<1%", scales::percent_format(accuracy = 1)(.))) %>% 
+    glue_data(
+      "\U0001F4CA {share0}<br><br>"
+    )
+  
+  just_one_tense_forms <- just_one_tense_forms_pre %>% 
     mutate(
       warning = if_else(is.na(extra_tense),"", paste0("<small>", extra_tense, "</small>")),
       rarity = if_else(coalesce(frq, 0) < rarity_cutoff, '<span style="color: #D0D0D0"><small><tt>[იშვიათი]</tt></small></span>', ""), 
@@ -298,7 +312,7 @@ for (tenseid in 1:6) {
     right_border_text_iter <- glue('<div style="text-align: right;color: #D0D0D0"><tt><br><big>{j}</big></tt></div>')
     just_one_tense_block[[j]] <- 
       paste0(
-        just_one_tense_header, just_one_tense_forms, 
+        just_one_tense_header, just_one_tense_frequency, just_one_tense_forms, 
         just_one_tense_examples_tidy, right_border_text_iter
       )
     j <- j+1
@@ -319,7 +333,7 @@ sputnik_words_frq_pre <- unique_words %>%
 
 sputnik_words_frq <- sputnik_words_frq_pre %>% 
   count(wid) %>%
-  filter(n / sum(n) > 0.001)
+  filter(n / sum(n) > 0.001, n > 5)
 
 top_word_connection <- sputnik_words_frq %>% 
   inner_join(raw_ka_words, by = "wid") %>% 
