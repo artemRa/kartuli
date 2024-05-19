@@ -73,13 +73,13 @@ sentense_hardness <- words_from_sentense_df %>%
 tense_emoji <- 
   tribble(
     ~eid, ~tenseji,
-    "01", "\u231B",
+    "01", "\u26A1",
     "02", "\U0001F570\U000FE0F",
     "03", "\U0001F570\U000FE0F\U0001F51A",
     "04", "\U0001F680\U0001F51C",
     "05", "\U0001F300",
     "06", "\U0001F449",
-    "X", "\U0001F4DA"
+    "X", "\u0030\uFE0F\u20E3"
   )
 
 num_emoji <- tribble(
@@ -119,7 +119,7 @@ meaning_temples <-
   )
 
 
-my_verb_oid <- 1361
+my_verb_oid <- 2181
 header_table <- ka_word_tidy_dict %>% 
   filter(pos == "verb", num == 1L, wid == !!my_verb_oid)
 
@@ -226,9 +226,9 @@ for (tenseid in 1:6) {
     filter(num == !!tenseid) %>% 
     mutate(eid = sprintf("%02d", num)) %>% 
     inner_join(tense_emoji, by = "eid") %>% 
-    glue_data("<hr><h1>{tense_kartulad} {tenseji}</h1>
+    glue_data("<hr><h2>{tense} {tenseji}</h2>
               \U0001F1F7\U0001F1FA {tense_rusulad}<br>
-              \U0001F1EC\U0001F1E7 {tense}<br>")
+              \U0001F1EC\U0001F1EA {tense_kartulad}<br>")
   
   extra_tense <- ka_word_tidy_dict %>% 
     filter(pos == "verb", oid == !!my_verb_oid) %>%
@@ -263,7 +263,7 @@ for (tenseid in 1:6) {
     ) %>%
     mutate_all(~ if_else(. < 0.01, "<1%", scales::percent_format(accuracy = 1)(.))) %>% 
     glue_data(
-      "\U0001F4CA {share0}<br><br>"
+      "<small>\U0001F3B2 <b>{share0}</b></small><br><br>"
     )
   
   just_one_tense_forms <- just_one_tense_forms_pre %>% 
@@ -341,7 +341,7 @@ top_word_connection <- sputnik_words_frq %>%
   mutate(dev = n / frq) %>% 
   filter(src > 1) %>% 
   arrange(desc(dev)) %>%
-  filter(row_number() <= 5L) %>%
+  filter(row_number() <= 10L) %>%
   select(wid, wrd, dev)
 
 sputnik_examples_pre <- top_word_connection %>% 
@@ -366,7 +366,7 @@ sputnik_words <- top_word_connection %>%
   inner_join(select(sputnik_examples_pre, wid), by = "wid") %>% 
   glue_data("<b>{wrd}</b>") %>% 
   paste0(collapse = ", ") %>% 
-  paste0("<h3>\U0001F517 ხშირად ერთად</h3>\u2705 ", .)
+  paste0("<h3>\U0001F9F6 ხშირად ერთად</h3>\u2705 ", .)
 
 sputnik_examples <- sputnik_examples_pre %>% 
   mutate(txt = paste("\u2022", str_replace_all(txt, wrd, glue('<u>{wrd}</u>')))) %>% 
