@@ -175,5 +175,209 @@ verb_form_collector <- function(banch_of_verb_link) {
 conjugation <- new_lingua_links %>% 
   verb_form_collector()
 
-saveRDS(conjugation, "conjugation.RData")
+# saveRDS(conjugation, "conjugation.RData")
+
+
+conjugation$meta %>% 
+  filter(infinitive != "") %>%
+  filter(str_detect(infinitive, "/")) %>%
+  view()
+
+# lost infinitive
+conjugation$meta %>% 
+  filter(infinitive != "") %>%
+  mutate(
+    preverb = if_else(
+      lid %in% c(28, 85, 92, 153, 202, 214) | str_length(preverb) > 4,
+      "",
+      preverb
+    )
+  ) %>% 
+  mutate(
+    infinitive2 = str_extract(infinitive, "(?<=/).*"),
+    infinitive = str_extract(infinitive, "^[^/]*"),
+    infinitive = if_else(
+      preverb != "" & !str_detect(infinitive, paste0("^", preverb)),
+      paste0(preverb, infinitive),
+      infinitive
+    )
+  ) %>% 
+  rename(wrd = infinitive) %>%
+  distinct(wrd) %>% 
+  anti_join(raw_ka_words, by = "wrd") %>%
+  dbAppendTable(conn, "ka_words_sample", .)
+
+filter(ka_word_tidy_dict, pos == "verb", tid == "X000") %>% 
+  select(wid, word, eng) %>% 
+  group_by(wid) %>% 
+  filter(n() > 1) %>% 
+  arrange(wid) %>% 
+  view()
+  
+
+infinitve_full_info <- conjugation$meta %>% 
+  filter(infinitive != "") %>%
+  mutate(
+    preverb = if_else(
+      lid %in% c(28, 85, 92, 153, 202, 214) | str_length(preverb) > 4,
+      "",
+      preverb
+    )
+  ) %>% 
+  mutate(
+    infinitive = str_extract(infinitive, "^[^/]*"),
+    infinitive = if_else(
+      preverb != "" & !str_detect(infinitive, paste0("^", preverb)) & str_length(preverb) < 5,
+      paste0(preverb, infinitive),
+      infinitive
+    )
+  ) %>% 
+  inner_join(raw_ka_words, by = c("infinitive" = "wrd")) %>% 
+  left_join(
+    filter(ka_word_tidy_dict, pos == "verb", tid == "X000") %>% 
+      select(wid, eng), 
+    by = "wid"
+  ) %>% 
+  distinct(wid, infinitive, english, eng) %>% 
+  nest(data = -c(wid, infinitive)) %>% 
+  mutate(
+    eng0 = map_chr(data, ~ paste(glue_data(., "{english}"), collapse = " / ")),
+    eng1 = map_chr(data, ~ unique(.x$eng)),
+    eng = if_else(str_detect(eng0, eng1) | is.na(eng1), eng0, paste(eng1, "/", eng0))
+    ) %>%
+  select(wid, word = infinitive, eng)
+  
+eng_form_data <- infinitve_full_info %>% 
+  inner_join(
+    filter(ka_word_tidy_dict, pos == "verb", tid == "X000") %>% 
+      select(wid), 
+    by = "wid"
+  )
+
+dbExecute(
+  conn, 
+  "UPDATE ka_word_tidy_dict SET eng = ? WHERE wid = ? and tid = 'X000' and pos = 'verb'", 
+  params = list(eng_form_data$eng, eng_form_data$wid)
+)
+
+
+dbExecute(conn, "UPDATE ka_word_tidy_dict SET num = 2 WHERE wid = 2559")
+infinitve_full_info %>% 
+  anti_join(
+    filter(ka_word_tidy_dict, pos == "verb", tid == "X000") %>% 
+      select(wid), 
+    by = "wid"
+  ) %>%
+  mutate(oid = wid, pos = "verb", tid = "X000", num = 1L, source = "L2") %>% 
+  select(wid, num, pos, tid, oid, word, source, eng) %>%
+  dbAppendTable(conn, "ka_word_tidy_dict", .)
+
+infinitive_clones <- conjugation$meta %>% 
+  filter(infinitive != "") %>%
+  filter(str_detect(infinitive, "/")) %>% 
+  mutate(
+    preverb = if_else(
+      lid %in% c(28, 85, 92, 153, 202, 214) | str_length(preverb) > 4,
+      "",
+      preverb
+    )
+  ) %>% 
+  mutate(
+    infinitive2 = str_extract(infinitive, "(?<=/).*"),
+    infinitive = str_extract(infinitive, "^[^/]*"),
+    infinitive = if_else(
+      preverb != "" & !str_detect(infinitive, paste0("^", preverb)),
+      paste0(preverb, infinitive),
+      infinitive
+    )
+  ) %>% 
+  select(wrd = infinitive, clone = infinitive2) %>% 
+  inner_join(raw_ka_words, by = "wrd") %>% 
+  select(oid = wid, clone)
+  
+infinitive_clones %>% 
+  anti_join(ka_word_tidy_dict, by = c("clone" = "word")) %>% 
+  inner_join(raw_ka_words, by =  c("clone" = "wrd")) %>% 
+  mutate(pos = "verb", tid = "X001", num = 1L, source = "L2") %>% 
+  select(wid, num, pos, tid, oid, word = clone, source) %>% 
+  dbAppendTable(conn, "ka_word_tidy_dict", .)
+
+
+conjugation_connector <- conjugation$meta %>% 
+  filter(infinitive != "") %>%
+  mutate(
+    preverb = if_else(
+      lid %in% c(28, 85, 92, 153, 202, 214) | str_length(preverb) > 4,
+      "",
+      preverb
+    )
+  ) %>% 
+  mutate(
+    infinitive = str_extract(infinitive, "^[^/]*"),
+    infinitive = if_else(
+      preverb != "" & !str_detect(infinitive, paste0("^", preverb)) & str_length(preverb) < 5,
+      paste0(preverb, infinitive),
+      infinitive
+    )
+  ) %>% 
+  select(lid, infinitive) %>% 
+  inner_join(infinitve_full_info, by = c("infinitive" = "word")) %>% 
+  rename(oid = wid) %>% 
+  select(oid, lid)
+
+
+verb_form_dict <- merge(verb_tense_data, verb_forms_data) %>% 
+  mutate(tid = paste0("V", sprintf("%02d", num), id)) %>% 
+  select(tid, tense, numb, prsn) %>% 
+  arrange(tid)
+
+conjugation_all_verbs <- conjugation$verbs %>%
+  inner_join(conjugation_connector, by = "lid") %>% 
+  select(-lid) %>% 
+  distinct() %>% 
+  separate(word, into = c("word1", "word2"), sep = "/", fill = "right") %>% 
+  pivot_longer(cols = starts_with("word"), values_to = "word") %>%
+  filter(!is.na(word)) %>%
+  select(-name) %>% 
+  mutate(
+    word1 = str_remove(word, ".*?\\)"),
+    word2 = str_remove_all(word, "[[:punct:][:space:]]")
+  ) %>% 
+  mutate_at(vars(starts_with("word")), str_squish) %>% 
+  mutate(words2 = if_else(word1 == word2, as.character(NA), word2)) %>% 
+  select(-word) %>% 
+  pivot_longer(cols = starts_with("word"), values_to = "word") %>%
+  filter(!is.na(word)) %>%
+  select(-name) %>% 
+  mutate(
+    word = str_remove_all(word, "[[:punct:]]"),
+    word = str_remove(word, " .*")
+  ) %>% 
+  inner_join(verb_form_dict, by = c("tense", "numb", "prsn")) %>% 
+  distinct() %>%
+  select(oid, word, tid)
+  
+
+conjugation_all_verbs %>% 
+  anti_join(raw_ka_words, by = c("word" = "wrd")) %>% 
+  select(wrd = word) %>% 
+  dbAppendTable(conn, "ka_words_sample", .)
+
+
+mnum_df <- ka_word_tidy_dict %>% group_by(wid) %>% summarise(mnum = max(num))
+conjugation_all_verbs %>% 
+  inner_join(raw_ka_words, by = c("word" = "wrd")) %>% 
+  mutate(pos = "verb", source = "L2") %>% 
+  anti_join(ka_word_tidy_dict, by = c("oid", "wid", "tid", "pos")) %>% 
+  left_join(mnum_df, by = "wid") %>% 
+  group_by(word) %>% 
+  mutate(num = row_number(paste0(sprintf("%09d", oid), tid)) + coalesce(mnum, 0L)) %>% 
+  ungroup() %>% 
+  select(wid, num, pos, tid, oid, word, source) %>%
+  dbAppendTable(conn, "ka_word_tidy_dict", .)
+
+
+
+raw_ka_words <- dbGetQuery(conn, "SELECT * FROM ka_words_sample")
+ka_word_tidy_dict <- dbGetQuery(conn, "SELECT * FROM ka_word_tidy_dict")
 

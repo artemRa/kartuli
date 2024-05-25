@@ -228,3 +228,14 @@ dbExecute(conn, {
         then 'normal' else 'exotic' 
       end
     "})
+
+
+DBI::dbSendQuery(
+  conn,
+  "
+    CREATE TABLE ka_lingua_link (
+      link TEXT,
+      PRIMARY KEY (link)
+    )
+  "
+)

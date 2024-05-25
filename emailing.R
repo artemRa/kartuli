@@ -41,16 +41,6 @@ freq_oid %>%
   head(500) %>% 
   view("verbs")
 
-ka_word_tidy_dict %>% 
-  filter(oid == 232, pos == "verb") %>% 
-  inner_join(raw_ka_words, by = "wid") %>% 
-  view("detailed")
-  
-
-ka_word_tidy_dict %>% 
-  filter(word == "ვგრძნობ") %>% 
-  view()
-
 
 raw_ka_sentense <- dbGetQuery(conn, 'select id, txt from ka_sentences')
 words_from_sentense <- raw_ka_sentense$txt %>% 
@@ -119,7 +109,7 @@ meaning_temples <-
   )
 
 
-my_verb_oid <- 2181
+my_verb_oid <- 3244
 header_table <- ka_word_tidy_dict %>% 
   filter(pos == "verb", num == 1L, wid == !!my_verb_oid)
 
