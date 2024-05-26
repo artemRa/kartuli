@@ -109,7 +109,7 @@ meaning_temples <-
   )
 
 
-my_verb_oid <- 3244
+my_verb_oid <- 44278
 header_table <- ka_word_tidy_dict %>% 
   filter(pos == "verb", num == 1L, wid == !!my_verb_oid)
 

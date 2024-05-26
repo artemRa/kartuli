@@ -377,6 +377,259 @@ conjugation_all_verbs %>%
   dbAppendTable(conn, "ka_word_tidy_dict", .)
 
 
+all_participle_data <- conjugation$meta %>% 
+  select(lid, participle) %>% 
+  rename(word = participle) %>%
+  separate(word, into = c("word1", "word2"), sep = "/", fill = "right") %>% 
+  pivot_longer(cols = starts_with("word"), values_to = "word") %>%
+  filter(!is.na(word)) %>%
+  select(-name) %>% 
+  mutate(
+    word1 = str_remove(word, ".*?\\)"),
+    word2 = str_remove_all(word, "[[:punct:][:space:]]")
+  ) %>% 
+  mutate_at(vars(starts_with("word")), str_squish) %>% 
+  mutate(words2 = if_else(word1 == word2, as.character(NA), word2)) %>% 
+  select(-word) %>% 
+  pivot_longer(cols = starts_with("word"), values_to = "word") %>%
+  filter(!is.na(word)) %>%
+  inner_join(conjugation_connector, by = "lid") %>% 
+  select(-c(name, lid)) %>% 
+  filter(word != "") %>% 
+  mutate(
+    word = str_remove_all(word, "[[:punct:]]"),
+    word = str_remove(word, " .*")
+  ) %>% 
+  filter(str_length(word) > 5) %>% 
+  distinct()
+
+all_participle_data %>% 
+  anti_join(raw_ka_words, by = c("word" = "wrd")) %>% 
+  select(wrd = word) %>% 
+  dbAppendTable(conn, "ka_words_sample", .)
+
+mnum_df <- ka_word_tidy_dict %>% group_by(wid) %>% summarise(mnum = max(num))
+all_participle_data %>% 
+  filter(word != "") %>% 
+  inner_join(raw_ka_words, by = c("word" = "wrd")) %>% 
+  mutate(pos = "verb", tid = "V001", source = "L2") %>% 
+  anti_join(ka_word_tidy_dict, by = c("oid", "wid", "tid", "pos")) %>% 
+  left_join(mnum_df, by = "wid") %>% 
+  group_by(word) %>% 
+  mutate(num = row_number(oid) + coalesce(mnum, 0L)) %>% 
+  ungroup() %>% 
+  select(wid, num, pos, tid, oid, word, source) %>%
+  dbAppendTable(conn, "ka_word_tidy_dict", .)
+
+dbExecute(conn, "DELETE FROM ka_word_tidy_dict WHERE word = ''")
+dbExecute(conn, "DELETE FROM ka_words_sample WHERE wrd = ''")
+dbExecute(conn, "UPDATE ka_word_tidy_dict SET eng = NULL WHERE tid = 'V001' and pos = 'verb'")
+
+
+load("ganmarteba_words_list.RData")
+load("ganmarteba_extra_list.RData")
+
+
+# words from dictionary
+ganmarteba_words <- 
+  ganmarteba_words_list %>% 
+  reduce(add_row) %>% 
+  mutate(word = str_remove(word, "[[:digit:]]$"))
+
+# meaning and examples
+ganmarteba_extra <- 
+  ganmarteba_extra_list %>% 
+  reduce(add_row) %>% 
+  mutate(meaning = str_replace_all(meaning, "\\([[:digit:]]\\)", " "))
+
+dbAppendTable(conn, "ka_ganmarteba_meta", ganmarteba_words)
+dbAppendTable(conn, "ka_ganmarteba_examples", ganmarteba_extra)
+
+
+ganmarteba_quick <- function(wrd, web_link) {
+  
+  ganmarteba_html <- read_html_iter(web_link)
+  next_page_links <- ganmarteba_html %>%
+    html_nodes("a") %>%
+    html_attr("href") %>% 
+    as_tibble() %>% 
+    filter(str_detect(value, "word") & !str_detect(value, "facebook")) %>% 
+    pull() %>% 
+    map_chr(~ iconv(URLdecode(.x), "UTF-8", "UTF-8")) %>% 
+    map_chr(~ paste0("https://www.ganmarteba.ge", .x))
+  
+  next_pages <- as.character()
+  word_from_site <- html_text(html_nodes(ganmarteba_html, "h1"))[1]
+  jump_link <- html_text(html_nodes(ganmarteba_html, ".firstpolp"))[1] %>% 
+    str_detect("^იხ.")
+  
+  if (is.na(word_from_site)) {
+    next_pages <- next_page_links[str_detect(next_page_links, paste0("/", wrd, "/[[:digit:]]$"))]
+  }
+  
+  if (jump_link & !is.na(jump_link)) {
+    next_pages <- next_page_links[1]
+  }
+  
+  list(link = next_pages, html = ganmarteba_html)
+}
+
+ganmarteba_word_collector <- function(bunch_of_words) {
+  
+  pb <- progress_bar$new(
+    format = "[:bar] :percent ETA: :eta",
+    total = nrow(bunch_of_words)
+  )
+  
+  ganmarteba_words_list <- list()
+  ganmarteba_extra_list <- list()
+  k <- 1L
+  
+  for (i in bunch_of_words$wid) {
+    
+    wrd <- filter(bunch_of_words, wid == !!i) %>% pull(wrd)
+    web_link <- paste0("https://www.ganmarteba.ge/word/", wrd)
+    ganmarteba <- ganmarteba_quick(wrd, web_link)
+    
+    list1 <- list()
+    list2 <- list()
+    
+    if (length(ganmarteba$link) > 0) {
+      
+      for (j in 1:length(ganmarteba$link)) {
+        list1[[j]] <- ganmarteba$link[j]
+        list2[[j]] <- ganmarteba_quick(wrd, ganmarteba$link[j])$html
+      }
+      
+    } else {
+      list1[[1]] <- web_link
+      list2[[1]] <- ganmarteba$html
+    }
+    
+    for (j in 1:NROW(list1)) {
+      
+      ganmarteba_html <- list2[[j]]
+      word_from_site <- html_text(html_nodes(ganmarteba_html, "h1"))[1]
+      p_html_text <- html_text(html_nodes(ganmarteba_html, "p"))
+      part_of_speach <- p_html_text[1]
+      verbs <- p_html_text[str_detect(p_html_text, "^ზმნები:")][1] %>% 
+        str_remove("^ზმნები:") %>% 
+        str_squish()
+      relative <- p_html_text[str_detect(p_html_text, "^ნათესაობითი ბრუნვა:")][1] %>% 
+        str_remove("^ნათესაობითი ბრუნვა:") %>% 
+        str_squish()  
+      
+      if (!is.na(word_from_site)) {
+        ganmarteba_words_list[[k]] <- 
+          tibble(
+            wid  = i,
+            gid = k,
+            word = word_from_site,
+            pos0 = part_of_speach,
+            relative = relative,
+            verbs = verbs,
+            site = list1[[j]]
+          )
+        
+        wrd_meaning <- html_text(html_nodes(ganmarteba_html, ".definition"))
+        wrd_example <- html_text(html_nodes(ganmarteba_html, ".illustracion"))
+        wrd_data_length <- min(length(wrd_meaning), length(wrd_example))
+        ganmarteba_extra_list[[k]] <-
+          tibble(
+            gid = k,
+            meaning = wrd_meaning[1:wrd_data_length],
+            examples = wrd_example[1:wrd_data_length]
+          ) %>% 
+          mutate(mid = row_number(), .after = 1L)
+        k <- k + 1L
+      } 
+    }
+    
+    pb$tick()
+  }
+  
+  # words from dictionary
+  meta <- 
+    ganmarteba_words_list %>% 
+    reduce(add_row) %>% 
+    mutate(word = str_remove(word, "[[:digit:]]$"))
+  
+  # meaning and examples
+  extra <- 
+    ganmarteba_extra_list %>% 
+    reduce(add_row) %>% 
+    mutate(meaning = str_replace_all(meaning, "\\([[:digit:]]\\)", " "))
+  
+  
+  list(words = meta, extra = extra)
+  
+}
+
+verb_words <- ka_word_tidy_dict %>% 
+  filter(pos == "verb", tid %in% c("X000", "X001", "V001"), is.na(desc)) %>% 
+  select(wid, wrd = word, tid, oid) %>% 
+  distinct()
+
+ganmarteba_new <- ganmarteba_word_collector(verb_words)
+pos_index <- map_int(ganmarteba_new$words$pos0, ~ which(str_detect(.x, part_of_speach_dict$geo))[1])
+gan_words_cleared <- ganmarteba_new$words %>% 
+  mutate(pos = !!part_of_speach_dict[pos_index,]$eng, .before = "pos0") %>% 
+  mutate_at(vars(pos0, pos), ~if_else(is.na(pos), as.character(NA), .x)) %>% 
+  mutate(pos = coalesce(pos, "oth")) %>% 
+  mutate(pos = if_else(pos0 == "არსებითი სახელი (საწყისი)", "verb", pos))  # отглагольное существ.
+
+
+extra_verb_forms <- verb_words %>% 
+  filter(tid %in% c("X000", "X001")) %>% 
+  inner_join(
+    filter(gan_words_cleared, pos == "verb"),
+    by = "wid"
+  ) %>% 
+  left_join(ganmarteba_new$extra,  by = "gid") %>% 
+  mutate(meaning = str_squish(meaning)) %>% 
+  filter(!str_detect(meaning, "[[:space:]]")) %>%
+  select(oid, word = meaning) %>% 
+  mutate(word = str_remove_all(word, "[[:punct:][:digit:]]"))
+
+extra_verb_forms %>% 
+  anti_join(raw_ka_words, by = c("word" = "wrd")) %>% 
+  select(wrd = word) %>% 
+  dbAppendTable(conn, "ka_words_sample", .)
+
+mnum_df <- ka_word_tidy_dict %>% group_by(wid) %>% summarise(mnum = max(num))
+extra_verb_forms %>% 
+  inner_join(raw_ka_words, by = c("word" = "wrd")) %>%
+  left_join(mnum_df, by = "wid") %>% 
+  group_by(word) %>% 
+  mutate(num = row_number(oid) + coalesce(mnum, 0L)) %>% 
+  mutate(pos = "verb", source = "G2", tid = "X001") %>% 
+  select(wid, num, pos, tid, oid, word, source) %>%
+  dbAppendTable(conn, "ka_word_tidy_dict", .) 
+
+verb_meaning <- verb_words %>%
+  filter(tid %in% c("X000", "X001")) %>% 
+  inner_join(
+    filter(gan_words_cleared, pos == "verb"),
+    by = "wid"
+  ) %>% 
+  left_join(ganmarteba_new$extra,  by = "gid") %>% 
+  mutate(meaning = str_squish(meaning)) %>% 
+  mutate(bad_desc = if_else(str_detect(meaning, "[[:space:]]"), 0L, 1L)) %>% 
+  group_by(wid) %>% 
+  arrange(wid, bad_desc, site, mid) %>%
+  filter(n() > 1) %>%
+  slice(1L) %>% 
+  ungroup() %>% 
+  select(oid, wid, tid, desc = meaning)
+
+dbExecute(
+  conn, 
+  "UPDATE ka_word_tidy_dict SET desc = ? WHERE oid = ? and wid = ? and tid = ? and pos = 'verb'", 
+  params = list(verb_meaning$desc, verb_meaning$oid, verb_meaning$wid, verb_meaning$tid)
+)
+
+
+
 
 raw_ka_words <- dbGetQuery(conn, "SELECT * FROM ka_words_sample")
 ka_word_tidy_dict <- dbGetQuery(conn, "SELECT * FROM ka_word_tidy_dict")

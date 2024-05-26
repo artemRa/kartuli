@@ -239,3 +239,32 @@ DBI::dbSendQuery(
     )
   "
 )
+
+DBI::dbSendQuery(
+  conn,
+  "
+    CREATE TABLE ka_ganmarteba_meta (
+      wid INTEGER,
+      gid INTEGER,
+      word STRING,
+      pos0 STRING,
+      relative STRING,
+      verbs STRING,
+      site STRING,
+      PRIMARY KEY (wid, gid)
+    )
+  "
+)
+
+DBI::dbSendQuery(
+  conn,
+  "
+    CREATE TABLE ka_ganmarteba_examples (
+      gid INTEGER,
+      mid INTEGER,
+      meaning STRING,
+      examples STRING,
+      PRIMARY KEY (gid, mid)
+    )
+  "
+)
