@@ -38,8 +38,60 @@ freq_oid %>%
   inner_join(ka_word_tidy_dict, by = c("oid", "pos")) %>% 
   filter(oid == wid, pos == "verb", num == 1L) %>% 
   arrange(desc(ofrq)) %>%
+  # filter(!is.na(eng)) %>% 
   head(500) %>% 
   view("verbs")
+
+
+verb_popularity_list <- freq_oid %>% 
+  inner_join(ka_word_tidy_dict, by = c("oid", "pos")) %>% 
+  filter(oid == wid, pos == "verb", num == 1L) %>% 
+  arrange(desc(ofrq))
+
+verb_table <- list()
+k <- 1L
+
+for (my_verb_oid in verb_popularity_list$oid) {
+  
+  main_info <- ka_word_tidy_dict %>% 
+    filter(pos == "verb", oid == !!my_verb_oid, tid == "X000") %>% 
+    select(oid, word, desc, eng)
+  
+  alt_forms <- ka_word_tidy_dict %>% 
+    filter(pos == "verb", tid == "X001", oid == !!my_verb_oid) %>% 
+    pull(word) %>% paste(sep = ", ")
+  
+  main_forms <- ka_word_tidy_dict %>% 
+    filter(pos == "verb", oid == !!my_verb_oid) %>% 
+    filter(tid %in% c("V011", "V031", "V041")) %>% 
+    left_join(raw_ka_words, by = "wid") %>% 
+    group_by(tid) %>%
+    filter(row_number(desc(coalesce(frq, 0))) == 1L) %>% 
+    ungroup() %>% 
+    select(tid, word) %>% 
+    arrange(tid) %>% 
+    pull(word) %>% 
+    paste(collapse = " \u2192 ")
+  
+  verb_table[[k]] <- main_info %>% 
+    add_column(
+      alt = ifelse(is_empty(alt_forms), NA, alt_forms), 
+      forms = ifelse(is_empty(main_forms), NA, main_forms)
+    )
+  
+  k <- k+1
+  
+}
+
+verb_table_df <- verb_table %>% reduce(add_row)
+verb_table_df %>% 
+  mutate(
+    word2 = paste(word, if_else(is.na(alt), glue(""), glue("({alt})")))
+  ) %>%
+  select(eng, word2, forms, desc) %>% 
+  write_csv2("verbs.csv")
+
+
 
 
 raw_ka_sentense <- dbGetQuery(conn, 'select id, txt from ka_sentences')
@@ -109,7 +161,7 @@ meaning_temples <-
   )
 
 
-my_verb_oid <- 44278
+my_verb_oid <- 2098
 header_table <- ka_word_tidy_dict %>% 
   filter(pos == "verb", num == 1L, wid == !!my_verb_oid)
 

@@ -15,6 +15,21 @@ verb_forms_data  <- gsheet::gsheet2tbl(config$glink3)
 extra_word_forms <- gsheet::gsheet2tbl(config$glink2)
 verified_ending  <- gsheet::gsheet2tbl(config$glink4)
 
+part_of_speach_dict <-
+  tribble(
+    ~eng,    ~eng2,		       ~geo,
+    "noun",	 "Noun",		     "არსებითი სახელი",    
+    "adj",   "Adjective",    "ზედსართავი სახელი",
+    "adv",   "Adverb",		   "ზმნიზედა", # наречие
+    "pron",  "Pronoun",		   "ნაცვალსახელი", # местоимение
+    "verb",	 "Verb",			   "ზმნა",
+    "conj",  "Conjunction",	 "კავშირი", # союзы
+    "num",   "Number",		   "რიცხვითი სახელი",
+    "prep",  "Preposition",  "თანდებული", # послеслоги
+    "part",	 "Participle",	 "ნაწილაკი", # частицы
+    "excl",  "Exclamation",  "შორისდებული" # восклицания
+  )
+
 # export pre-clearing Georgian words 
 conn <- DBI::dbConnect(RSQLite::SQLite(), dbname = "kartuli.db")
 raw_ka_words <- dbGetQuery(conn, "SELECT * FROM ka_words_sample")
@@ -480,7 +495,7 @@ ganmarteba_word_collector <- function(bunch_of_words) {
     format = "[:bar] :percent ETA: :eta",
     total = nrow(bunch_of_words)
   )
-  
+
   ganmarteba_words_list <- list()
   ganmarteba_extra_list <- list()
   k <- 1L
@@ -566,8 +581,8 @@ ganmarteba_word_collector <- function(bunch_of_words) {
 }
 
 verb_words <- ka_word_tidy_dict %>% 
-  filter(pos == "verb", tid %in% c("X000", "X001", "V001"), is.na(desc)) %>% 
-  select(wid, wrd = word, tid, oid) %>% 
+  filter(pos == "verb", tid %in% c("X000", "X001", "V001"), is.na(desc) | source == "L1") %>% 
+  select(wid, wrd = word) %>% 
   distinct()
 
 ganmarteba_new <- ganmarteba_word_collector(verb_words)
@@ -578,6 +593,20 @@ gan_words_cleared <- ganmarteba_new$words %>%
   mutate(pos = coalesce(pos, "oth")) %>% 
   mutate(pos = if_else(pos0 == "არსებითი სახელი (საწყისი)", "verb", pos))  # отглагольное существ.
 
+ka_ganmarteba_meta <- dbGetQuery(conn, "SELECT * FROM ka_ganmarteba_meta")
+max_gid <- max(ka_ganmarteba_meta$gid)
+ganmarteba_new$words %>% 
+  anti_join(ka_ganmarteba_meta, by = "wid") %>% 
+  mutate(gid = !!max_gid + gid) %>% 
+  dbAppendTable(conn, "ka_ganmarteba_meta", .)
+
+ka_ganmarteba_meta <- dbGetQuery(conn, "SELECT * FROM ka_ganmarteba_meta")
+ganmarteba_new$extra %>% 
+  mutate(gid = !!max_gid + gid) %>%
+  inner_join(select(ka_ganmarteba_meta, gid), by = "gid") %>% 
+  dbAppendTable(conn, "ka_ganmarteba_examples", .)
+
+ka_ganmarteba_examples <- dbGetQuery(conn, "SELECT * FROM ka_ganmarteba_examples")
 
 extra_verb_forms <- verb_words %>% 
   filter(tid %in% c("X000", "X001")) %>% 
@@ -627,6 +656,174 @@ dbExecute(
   "UPDATE ka_word_tidy_dict SET desc = ? WHERE oid = ? and wid = ? and tid = ? and pos = 'verb'", 
   params = list(verb_meaning$desc, verb_meaning$oid, verb_meaning$wid, verb_meaning$tid)
 )
+
+
+
+
+verb_full_forms <- ka_word_tidy_dict %>% 
+  filter(
+    pos == "verb",
+    !str_detect(tid, "^X"),
+    !str_detect(tid, "^N"),
+    oid != wid
+  ) %>% 
+  distinct(oid, wid, word, tid)
+
+oid_match_df <- 
+  tibble(
+    oid1 = numeric(),
+    oid2 = numeric()
+  )
+
+unmatched_list <- list()
+k <- 1
+
+for (selected_oid in unique(verb_full_forms$oid)) {
+
+  matched_df <- filter(verb_full_forms, oid == !!selected_oid) %>% 
+    left_join(filter(verb_full_forms, oid != !!selected_oid), by = c("tid", "wid"))
+  
+  if (nrow(filter(matched_df, is.na(oid.y))) < 5) {
+    bigger_oid <- unique(na.omit(matched_df$oid.y))
+    
+    for (big_oid in bigger_oid) {
+      
+      unmatched_df <- filter(verb_full_forms, oid == !!selected_oid) %>% 
+        anti_join(filter(verb_full_forms, oid == !!big_oid), by = c("tid", "wid"))
+      
+      if (nrow(unmatched_df) < 5) {
+        oid_match_df <- add_row(oid_match_df, oid1 = big_oid, oid2 = selected_oid)
+        unmatched_list[[k]] <- unmatched_df
+        k <- k + 1
+        
+      }
+    }
+  }
+}
+
+unmatched_df <- unmatched_list %>% reduce(add_row) 
+oid_match_df_clear <- oid_match_df %>% 
+  group_by(oid1 * oid2) %>% 
+  arrange(desc(oid2)) %>% 
+  filter(row_number() == 1L) %>% 
+  ungroup() %>% 
+  select(oid1, oid2)
+unmatched_df_clear <- unmatched_df %>% 
+  filter(oid %in% oid_match_df_clear$oid2)
+
+
+moving_verb_data <- ka_word_tidy_dict %>% 
+  filter(
+    pos == "verb",
+    !str_detect(tid, "^V"),
+  ) %>% 
+  inner_join(oid_match_df_clear, by = c("oid" = "oid2")) %>% 
+  mutate(
+    tid = if_else(tid == "X000", "X001", tid),
+    oid = oid1
+  ) %>% 
+  select(-oid1) %>% 
+  anti_join(ka_word_tidy_dict, by = c("oid", "wid", "tid"))
+
+
+dbExecute(
+  conn, 
+  "DELETE FROM ka_word_tidy_dict WHERE oid = ? and pos = 'verb'", 
+  params = list(oid_match_df_clear$oid2)
+)
+
+mnum_df <- ka_word_tidy_dict %>% group_by(wid) %>% summarise(mnum = max(num))
+moving_verb_data %>% 
+  left_join(mnum_df, by = "wid") %>% 
+  group_by(wid) %>% 
+  mutate(num2 = row_number()) %>% 
+  ungroup() %>% 
+  mutate(num = if_else(coalesce(mnum, 0) > 0, mnum + num2, num2)) %>%
+  select(-c(mnum, num2)) %>%
+  dbAppendTable(conn, "ka_word_tidy_dict", .)
+
+
+unmatched_df_clear %>% 
+  inner_join(raw_ka_words, by = "wid") %>% 
+  filter(!is.na(frq)) %>% 
+  inner_join(oid_match_df_clear, by = c("oid" = "oid2")) %>% 
+  left_join(mnum_df, by = "wid") %>% 
+  group_by(wid) %>% 
+  mutate(num2 = row_number()) %>% 
+  ungroup() %>% 
+  mutate(num = if_else(coalesce(mnum, 0) > 0, mnum + num2, num2)) %>%
+  mutate(oid = oid1, source = "L2", pos = "verb") %>% 
+  select(oid, tid, wid, word, pos, num, source) %>% 
+  dbAppendTable(conn, "ka_word_tidy_dict", .)
+
+
+
+verb_duplicates <- ka_word_tidy_dict %>% 
+  filter(
+    pos == "verb",
+    tid == "X001",
+    wid %in% ka_word_tidy_dict$oid
+  ) %>% 
+  select(oid, wid)
+
+ka_word_tidy_dict %>% 
+  filter(
+    pos == "verb",
+    str_detect(tid, "N"),
+  ) %>%
+  inner_join(verb_duplicates, by = "oid") %>% 
+  view()
+
+dbExecute(
+  conn, 
+  "DELETE FROM ka_word_tidy_dict WHERE oid = ? and wid = ? and pos = 'verb'", 
+  params = list(verb_duplicates$oid, verb_duplicates$wid)
+)
+
+dbExecute(
+  conn, 
+  "DELETE FROM ka_word_tidy_dict WHERE oid = ? and pos = 'verb'", 
+  params = list(c(10))
+)
+
+
+
+
+ka_ganmarteba_meta <- dbGetQuery(conn, "SELECT * FROM ka_ganmarteba_meta")
+ka_ganmarteba_examples <- dbGetQuery(conn, "SELECT * FROM ka_ganmarteba_examples")
+
+pos_index <- map_int(ka_ganmarteba_meta$pos0, ~ which(str_detect(.x, part_of_speach_dict$geo))[1])
+ka_ganmarteba_meta <- ka_ganmarteba_meta %>% 
+  mutate(pos = !!part_of_speach_dict[pos_index,]$eng, .before = "pos0") %>% 
+  mutate_at(vars(pos0, pos), ~if_else(is.na(pos), as.character(NA), .x)) %>% 
+  mutate(pos = coalesce(pos, "oth")) %>% 
+  mutate(pos = if_else(pos0 == "არსებითი სახელი (საწყისი)", "verb", pos))  # отглагольное существ.
+
+found_verbs <- ka_ganmarteba_meta %>% 
+  filter(pos == "verb") %>%
+  inner_join(ka_ganmarteba_examples, by = "gid") %>%
+  mutate(meaning = str_squish(meaning)) %>% 
+  mutate(bad_desc = if_else(str_detect(meaning, "[[:space:]]"), 0L, 1L)) %>% 
+  group_by(wid) %>% 
+  arrange(bad_desc, site, mid) %>%
+  slice(1L) %>% 
+  ungroup() %>% 
+  select(wid, desc = meaning)
+
+
+extra_verb_info <- ka_word_tidy_dict %>% 
+  filter(
+    pos == "verb",
+    str_detect(tid, "^X"),
+    is.na(desc)
+  ) %>% 
+  select(oid, wid, tid) %>% 
+  inner_join(found_verbs, by = "wid")
+
+dbExecute(conn, "UPDATE ka_word_tidy_dict SET desc = ? WHERE oid = ? and wid = ? and tid = ? and pos = 'verb'",
+          params = list(extra_verb_info$desc, extra_verb_info$oid, extra_verb_info$wid, extra_verb_info$tid))
+
+
 
 
 
