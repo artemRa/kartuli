@@ -817,7 +817,7 @@ extra_verb_info <- ka_word_tidy_dict %>%
     str_detect(tid, "^X"),
     is.na(desc)
   ) %>% 
-  select(oid, wid, tid) %>% 
+  select(oid, wid, tid) %>%
   inner_join(found_verbs, by = "wid")
 
 dbExecute(conn, "UPDATE ka_word_tidy_dict SET desc = ? WHERE oid = ? and wid = ? and tid = ? and pos = 'verb'",

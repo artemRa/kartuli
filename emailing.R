@@ -11,7 +11,20 @@ conn <- DBI::dbConnect(RSQLite::SQLite(), dbname = "kartuli.db")
 rarity_cutoff <- 5L
 raw_ka_words <- dbGetQuery(conn, "SELECT * FROM ka_words_sample")
 ka_word_tidy_dict <- dbGetQuery(conn, "SELECT * FROM ka_word_tidy_dict")
-
+part_of_speach_dict <-
+  tribble(
+    ~eng,    ~eng2,		       ~geo,
+    "noun",	 "Noun",		     "არსებითი სახელი",    
+    "adj",   "Adjective",    "ზედსართავი სახელი",
+    "adv",   "Adverb",		   "ზმნიზედა", # наречие
+    "pron",  "Pronoun",		   "ნაცვალსახელი", # местоимение
+    "verb",	 "Verb",			   "ზმნა",
+    "conj",  "Conjunction",	 "კავშირი", # союзы
+    "num",   "Number",		   "რიცხვითი სახელი",
+    "prep",  "Preposition",  "თანდებული", # послеслоги
+    "part",	 "Participle",	 "ნაწილაკი", # частицы
+    "excl",  "Exclamation",  "შორისდებული" # восклицания
+  )
 
 verified_oid <- distinct(ka_word_tidy_dict, wid, oid, pos) 
 freq_oid <- raw_ka_words %>% 
@@ -38,6 +51,7 @@ freq_oid %>%
   inner_join(ka_word_tidy_dict, by = c("oid", "pos")) %>% 
   filter(oid == wid, pos == "verb", num == 1L) %>% 
   arrange(desc(ofrq)) %>%
+  mutate(id = row_number(), .before = 1L) %>% 
   # filter(!is.na(eng)) %>% 
   head(500) %>% 
   view("verbs")
@@ -161,7 +175,7 @@ meaning_temples <-
   )
 
 
-my_verb_oid <- 2098
+my_verb_oid <- 15359
 header_table <- ka_word_tidy_dict %>% 
   filter(pos == "verb", num == 1L, wid == !!my_verb_oid)
 
@@ -329,9 +343,9 @@ for (tenseid in 1:6) {
       filter(str_detect(tid, paste0("V", sprintf("%02d", !!tenseid)))) %>%
       inner_join(words_from_sentense_df, by = "wid") %>%
       inner_join(sentense_hardness, by = "id") %>% 
-      anti_join(already_used_examples, by = "id") %>% 
-      anti_join(extra_tense, by = "wid") %>% 
-      filter(cnt > 3, maxy < 1000) %>% 
+      # anti_join(already_used_examples, by = "id") %>% 
+      # anti_join(extra_tense, by = "wid") %>% 
+      filter(cnt > 3, maxy < 5000) %>% 
       distinct(id, maxy, cnt, wid, word) %>%
       group_by(wid) %>%
       arrange(maxy) %>%
