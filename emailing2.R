@@ -59,8 +59,8 @@ freq_oid %>%
 
 # Collecting examples of word usage to understand context ----
 ## Collecting all available examples ----
-my_verb_oid <- 42551
 raw_ka_sentense <- dbGetQuery(conn, 'select id, txt from ka_sentences')
+my_verb_oid <- 5169
 words_from_sentense <- raw_ka_sentense$txt %>% 
   str_replace_all("[[:punct:]]", " ") %>% 
   str_split("\\s+") %>% 
@@ -80,7 +80,7 @@ sentense_hardness <- words_from_sentense_df %>%
 
 
 ## Finding contextually related words ----
-# Collecting words present in the same sentence as the target word
+# collecting words present in the same sentence as the target word
 sputnik_words_frq_pre <- ka_word_tidy_dict %>% 
   filter(pos == "verb", oid == !!my_verb_oid) %>% 
   distinct(wid, word) %>% 
@@ -89,7 +89,7 @@ sputnik_words_frq_pre <- ka_word_tidy_dict %>%
   inner_join(words_from_sentense_df, by = "id") %>% 
   filter(word != wrd)
 
-# Searching for frequency anomalies
+# searching for frequency anomalies
 sputnik_words_frq <- sputnik_words_frq_pre %>% 
   count(word, wid) %>%
   filter(n / sum(n) > 0.001, n > 5)
@@ -104,18 +104,21 @@ top_word_connection <- sputnik_words_frq %>%
   filter(row_number() <= 30L, dev > 1.3) %>%
   select(word, wid, wrd, dev)
 
-
 context_add_needed <- sputnik_words_frq_pre %>% select(wid, id) %>%  
   inner_join(top_word_connection, by = "wid") %>% 
   group_by(id, word) %>% 
   summarise(score = max(dev), .groups = "drop")
   
+# text formating staff
 replacer <- function(data, word_vector) {
   for (i in 1:length(word_vector)) {
     wrdy <- word_vector[i]
     data <- data %>%
       mutate(
-        txt = str_replace_all(txt, paste0("\\b", !!wrdy, "(\\b|[[:punct:]])"), glue('<u>{wrdy}</u>'))
+        txt = str_replace_all(
+          txt, 
+          paste0("\\b", !!wrdy, "(\\b|[[:punct:]])"), glue('<u>{wrdy}</u>')
+        )
       )
   }
   data
@@ -147,7 +150,7 @@ tense_num_emoji <- crossing(tense_emoji, num_emoji) %>%
   filter(eid != "X") %>% 
   mutate(
     tid = paste0("V", eid, pid),
-    label = paste0(tenseji, numji)
+    label = paste(tenseji, "\u00D7", numji)
   ) %>% 
   select(tid, label)
 
@@ -158,7 +161,7 @@ examples_df <- ka_word_tidy_dict %>%
   filter(vsimple == 1) %>% 
   inner_join(words_from_sentense_df, by = "wid") %>%
   inner_join(sentense_hardness, by = "id") %>%
-  filter(cnt > 3, maxy < 1000) %>%
+  filter(cnt > 5, maxy < 1000) %>%  # complexity filters
   distinct(id, maxy, cnt, tid, wid, word)
 
 top_sentenses_lv1 <- examples_df %>%
@@ -169,19 +172,19 @@ top_sentenses_lv1 <- examples_df %>%
   arrange(maxy, cnt, wid) %>% 
   slice(1L) %>% 
   ungroup() %>% 
-  filter(dr <= 10) %>% 
+  filter(dr <= 7) %>% 
   select(id, maxy, cnt, tid, wid, word)
 
 top_sentenses_lv2 <- examples_df %>% 
   filter(!word %in% top_sentenses_lv1$word) %>% 
   anti_join(top_sentenses_lv1, by = "id") %>% 
   group_by(wid) %>%
-  arrange(maxy, cnt, wid) %>% 
+  arrange(desc(maxy), cnt, wid) %>% 
   slice(1L) %>% 
   ungroup()
 
-top_sputnik_words_vector <- top_word_connection %>% 
-  filter(row_number(desc(dev)) <= 10) %>% 
+top_sputnik_words_vector <- top_word_connection %>% ungroup() %>% 
+  filter(row_number(desc(dev)) <= 7) %>%
   pull(wrd)
 
 top_sentenses_full <- top_sentenses_lv2 %>% 
@@ -194,11 +197,11 @@ top_sentenses_full <- top_sentenses_lv2 %>%
   ungroup() %>%
   mutate(eid = cut(maxy, breaks = c(0, 250, 500, 1000, 5000, Inf), labels = FALSE)) %>%
   group_by(eid) %>%
-  filter(row_number() <= 5L) %>%
+  filter(row_number() <= 3L) %>%
   mutate(txt = paste("\u2022", str_replace_all(txt, word, glue('<span style="color: #BA2649">{word}</span>')))) %>%
   replacer(top_sputnik_words_vector) %>%
   left_join(tense_num_emoji, by = "tid") %>%
-  mutate(txt = paste(txt, "<br>&nbsp;<b>/<small>", label, "<br></small></b>")) %>% 
+  mutate(txt = paste(txt, "<br>&nbsp;/<small>", label, "<br></small>")) %>% 
   ungroup()
 
 hardness_emoji <- 
@@ -214,24 +217,22 @@ hardness_emoji <-
 hardness_emoji <- 
   tribble(
     ~eid, ~emoji,
-    1, "<h3>1. მარტივი</h3>", # "😊" (Easy)
-    2, "<h3>2. ზომიერი</h3>", # "😐" (Moderate)
-    3, "<h3>3. რთული</h3>",  # "😕" (Challenging)
+    1, "<h3>მარტივი...</h3>", # "😊" (Easy)
+    2, "<h3>ზომიერი...</h3>", # "😐" (Moderate)
+    3, "<h3>რთული...</h3>",  # "😕" (Challenging)
     4, "<h3>\U0001F630 უფრო რთული</h3>", # "😰" (Difficult)
     5, "<h3>\U0001F62B ძალიან რთული</h3>", # "😫" (Very Difficult)
   )
 
 examples <- top_sentenses_full %>% 
-  nest(data = -eid) %>% 
+  nest(data = -eid) %>%
   arrange(eid) %>% 
   inner_join(hardness_emoji, by = "eid") %>% 
   mutate(col = map_chr(data, ~ paste0(glue_data(., "{txt}"), collapse = "<br>"))) %>% 
   glue_data("{emoji} <p>{col}</p>") %>% 
   paste0(collapse = "")
 
-sputnik_top_words <- top_word_connection %>% 
-  head(10) %>% 
-  glue_data("{wrd}") %>% 
+sputnik_top_words <- top_sputnik_words_vector %>% 
   paste0(collapse = ", ") %>% 
   paste0("\U1F9F5", .)
 
