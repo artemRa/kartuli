@@ -51,12 +51,12 @@ freq_oid %>%
 tense_emoji <- 
   tribble(
     ~eid, ~tenseji,
-    "01", "\u26A1",
-    "02", "\U0001F570\U000FE0F\u267B",
-    "03", "\U0001F570\U000FE0F\U0001F51A",
+    "01", "\U0001F6A8\U0001F4A5",
+    "02", "\U0001F4C6\U000FE0F\U0001F522",
+    "03", "\U0001F4C6\U000FE0F\U0001F51A",
     "04", "\U0001F680\U0001F51C",
-    "05", "\U0001F300",
-    "06", "\U0001F449"
+    "05", "\U0001F399\U0001F300",
+    "06", "\U0001F399\U0001F449"
   )
 
 num_emoji <- tribble(
@@ -102,9 +102,10 @@ replacer <- function(data, word_vector) {
 }
 
 
-my_verb_oid <- 2226
+my_verb_oid <- 1050
 tense_filter <- 1:6
 nouns_filter <- T
+hard_filter <- filter(max_freq_oid, oid == !!my_verb_oid)$oid + 500
 
 # Word custom complexity rating ----
 topn_wrd_rating <- raw_ka_words %>% 
@@ -161,25 +162,32 @@ sputnik_words_frq_pre <- ka_word_tidy_dict %>%
 
 # searching for frequency anomalies
 sputnik_words_frq <- sputnik_words_frq_pre %>% 
-  count(word, wid) %>%
+  # count(word, wid) %>%
+  count(wid) %>%
   filter(n / sum(n) > 0.0005, n > 5)
 
 # the most major frequent anomalies 
 top_word_connection <- sputnik_words_frq %>% 
   inner_join(raw_ka_words, by = "wid") %>%
-  group_by(word) %>% 
+  # group_by(word) %>% 
   mutate_at(vars(n, frq), ~ .x / sum(.x)) %>% 
   mutate(dev = n / frq) %>%
   filter(src > 1) %>%
   arrange(desc(dev)) %>%
   filter(row_number() <= 30L, dev > 1.3) %>%
-  select(word, wid, wrd, dev)
+  select(wid, wrd, dev)
+  # select(word, wid, wrd, dev)
 
 # context anomaly score for each sentence - selected word
 context_add_needed <- sputnik_words_frq_pre %>% select(wid, id) %>%  
   inner_join(top_word_connection, by = "wid") %>% 
-  group_by(id, word) %>% 
-  summarise(score = max(dev), .groups = "drop")
+  # group_by(id, word) %>% 
+  group_by(id) %>% 
+  summarise(
+    score = max(dev), 
+    twrd = max(wrd),
+    .groups = "drop"
+  )
  
  
 # Examples gathering and formatting ----
@@ -198,30 +206,34 @@ examples_df <- ka_word_tidy_dict %>%
   group_by(wid) %>% filter(row_number(tid) == 1L) %>% ungroup() %>% 
   inner_join(words_from_sentense_df, by = "wid") %>%
   inner_join(sentense_hardness, by = "id") %>%
-  filter(cnt > 5, maxy < 1000) %>%  # complexity filters
-  distinct(id, maxy, cnt, tid, wid, word)
+  filter(cnt > 5, maxy < !!hard_filter) %>%  # complexity filters
+  mutate(eid = cut(maxy, breaks = c(0, 250, 500, 750, 1000, Inf), labels = FALSE)) %>%
+  distinct(id, eid, maxy, cnt, tid, wid, word)
 
 top_sentenses_lv1 <- examples_df %>%
-  left_join(context_add_needed, by = c("id", "word")) %>%
+  # left_join(context_add_needed, by = c("id", "word")) %>%
+  left_join(context_add_needed, by = c("id")) %>%
   replace_na(list(score = 0)) %>%
   mutate(dr = dense_rank(desc(score))) %>%
   group_by(dr) %>% 
-  arrange(maxy, cnt, wid) %>% 
-  slice(1L) %>% 
+  arrange(maxy, desc(cnt), wid) %>% 
+  slice_head(n = 1L) %>% 
   ungroup() %>% 
   filter(dr <= 7) %>% 
-  select(id, maxy, cnt, tid, wid, word)
+  select(id, maxy, cnt, tid, wid, word, eid) %>% 
+  add_column(context = 1L)
 
 top_sentenses_lv2 <- examples_df %>% 
   filter(!word %in% top_sentenses_lv1$word) %>% 
   anti_join(top_sentenses_lv1, by = "id") %>% 
-  group_by(wid) %>%
-  arrange(desc(maxy), cnt, wid) %>% 
-  slice(1L) %>% 
-  ungroup()
+  group_by(wid, eid) %>%
+  arrange(maxy, desc(cnt), wid) %>% 
+  slice_head(n = 1L) %>% 
+  ungroup() %>% 
+  add_column(context = 0L)
 
 top_sputnik_words_vector <- top_word_connection %>% ungroup() %>% 
-  filter(row_number(desc(dev)) <= 7) %>%
+  # filter(row_number(desc(dev)) <= 7) %>%
   pull(wrd) %>% 
   unique()
 
@@ -233,15 +245,20 @@ top_sentenses_full <- top_sentenses_lv2 %>%
   group_by(tech_txt) %>% 
   sample_n(1L) %>%
   ungroup() %>%
-  mutate(eid = cut(maxy, breaks = c(0, 250, 500, 1000, 5000, Inf), labels = FALSE)) %>%
   group_by(eid) %>%
+  arrange(desc(context), maxy) %>% 
   filter(row_number() <= 3L) %>%
   mutate(txt = str_replace_all(txt, word, glue('<span style="color: #BA2649">{word}</span>'))) %>%
   replacer(top_sputnik_words_vector) %>%
   left_join(tense_num_emoji, by = "tid") %>%
   mutate(label = 
            case_when(
-             !str_detect(tid, "V") ~ "\u0030\uFE0F\u20E3",
+             !str_detect(tid, "V") ~ 
+               paste0("\u0030\uFE0F\u20E3", 
+                     case_when(
+                       str_detect(tid, "X") ~ "\U0001F31A",
+                       T ~ "\U0001F318"
+                     )),
              T ~ label
            )
   ) %>% 
@@ -251,6 +268,7 @@ top_sentenses_full <- top_sentenses_lv2 %>%
 examples <- top_sentenses_full %>% 
   nest(data = -eid) %>%
   arrange(eid) %>% 
+  filter(row_number(eid) <= 3) %>% 
   inner_join(hardness_emoji, by = "eid") %>% 
   mutate(col = map_chr(data, ~ paste0(glue_data(., "{txt}"), collapse = "<br>"))) %>% 
   glue_data("{emoji} <p>{col}</p>") %>% 
